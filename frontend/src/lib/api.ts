@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getToken } from "./auth";
 import type {
   ComplianceResult,
   FrameworkSummary,
@@ -6,10 +7,20 @@ import type {
   ComplianceTrend,
   RemediationItem,
 } from "../types/compliance";
+import type { OscalAssessmentResults } from "../types/oscal";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? "/api",
   withCredentials: true,
+});
+
+// Attach OIDC bearer token to every request
+api.interceptors.request.use(async (config) => {
+  const token = await getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 // ── Compliance Results ────────────────────────────────────────────────────────
@@ -34,6 +45,35 @@ export const getTrend = (params: {
   framework: string;
   days?: number;
 }) => api.get<ComplianceTrend[]>("/compliance/trend", { params }).then((r) => r.data);
+
+// ── OSCAL Export ──────────────────────────────────────────────────────────────
+
+export const getOscalAssessment = (params: {
+  framework: string;
+  hostname?: string;
+  limit?: number;
+}) =>
+  api
+    .get<OscalAssessmentResults>("/oscal/assessment-results", { params })
+    .then((r) => r.data);
+
+export const downloadOscal = async (params: {
+  framework: string;
+  hostname?: string;
+  format?: "json" | "yaml";
+}) => {
+  const fmt = params.format ?? "json";
+  const response = await api.get("/oscal/assessment-results/download", {
+    params: { ...params, format: fmt },
+    responseType: "blob",
+  });
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `oscal-assessment-${params.framework}.${fmt}`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 // ── Remediation ───────────────────────────────────────────────────────────────
 

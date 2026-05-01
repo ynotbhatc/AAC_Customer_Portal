@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from src.core.config import get_settings
 from src.core.database import get_pool, close_pool
-from src.routers import compliance
+from src.routers import compliance, oscal
 
 
 @asynccontextmanager
@@ -18,8 +18,12 @@ settings = get_settings()
 
 app = FastAPI(
     title="AAC Customer Portal API",
-    description="Read-only API over the AAC compliance_results PostgreSQL database",
-    version="0.1.0",
+    description=(
+        "Read-only API over the AAC compliance_results PostgreSQL database. "
+        "Supports OIDC bearer token auth (Keycloak / Red Hat SSO) and "
+        "OSCAL 1.1.2 Assessment Results export."
+    ),
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -32,8 +36,9 @@ app.add_middleware(
 )
 
 app.include_router(compliance.router, prefix="/api")
+app.include_router(oscal.router, prefix="/api")
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "0.2.0"}

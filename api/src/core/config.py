@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     pg_port: int = 5432
     pg_database: str = "compliance"
     pg_user: str = "compliance_reader"
-    pg_password: str
+    pg_password: str = ""
 
     # AAP Controller
     aap_url: str = "https://192.168.4.62"
@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     opa_security_url: str = "http://192.168.4.62:8181"
     opa_compliance_url: str = "http://192.168.4.62:8182"
     opa_ot_url: str = "http://192.168.4.62:8183"
+
+    # OIDC / Keycloak
+    oidc_enabled: bool = True
+    oidc_issuer: str = "https://sso.example.com/realms/aac"
+    oidc_client_id: str = "aac-portal"
+    oidc_verify_ssl: bool = True
 
     # Portal
     secret_key: str = "change-me-in-production"

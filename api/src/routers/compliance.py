@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from ..core.database import get_pool
+from ..core.auth import CurrentUser
 from ..models.compliance import ComplianceResult, FrameworkSummary, HostSummary, ComplianceTrend
 import asyncpg
 
@@ -8,6 +9,7 @@ router = APIRouter(prefix="/compliance", tags=["compliance"])
 
 @router.get("/results", response_model=list[ComplianceResult])
 async def list_results(
+    user: CurrentUser,
     hostname: str | None = None,
     framework: str | None = None,
     limit: int = Query(default=50, le=500),
@@ -42,7 +44,10 @@ async def list_results(
 
 
 @router.get("/frameworks", response_model=list[FrameworkSummary])
-async def list_frameworks(pool: asyncpg.Pool = Depends(get_pool)):
+async def list_frameworks(
+    user: CurrentUser,
+    pool: asyncpg.Pool = Depends(get_pool),
+):
     rows = await pool.fetch(
         """
         SELECT
@@ -61,7 +66,10 @@ async def list_frameworks(pool: asyncpg.Pool = Depends(get_pool)):
 
 
 @router.get("/hosts", response_model=list[HostSummary])
-async def list_hosts(pool: asyncpg.Pool = Depends(get_pool)):
+async def list_hosts(
+    user: CurrentUser,
+    pool: asyncpg.Pool = Depends(get_pool),
+):
     rows = await pool.fetch(
         """
         SELECT
@@ -80,7 +88,8 @@ async def list_hosts(pool: asyncpg.Pool = Depends(get_pool)):
 
 @router.get("/trend", response_model=list[ComplianceTrend])
 async def get_trend(
-    framework: str,
+    user: CurrentUser,
+    framework: str = Query(...),
     hostname: str | None = None,
     days: int = Query(default=30, le=365),
     pool: asyncpg.Pool = Depends(get_pool),
