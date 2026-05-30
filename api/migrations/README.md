@@ -21,6 +21,31 @@ PGPASSWORD=change-me-portal psql \
 ## Migration order
 
 1. `001_cve_intelligence.sql` — tenants, tenant_tokens, tenant_inventory_catalog, tenant_pull_runs
+2. `002_cve_feeds.sql` — cve_events, cve_references, feed_runs
+
+## Feed adapters
+
+After 002 is applied, kick the adapters:
+
+```bash
+# Optional: NVD API key (raises rate limit from 5 to 50 req / 30s)
+export NVD_API_KEY=<your-key>
+
+# Standalone:
+PORTAL_PG_HOST=localhost \
+PORTAL_PG_PASSWORD=change-me-portal \
+python -m src.feeds.runner nvd --lookback-days 2
+
+PORTAL_PG_PASSWORD=change-me-portal \
+python -m src.feeds.runner cisa_kev
+
+# Or both:
+python -m src.feeds.runner all
+
+# Or via the API (requires PORTAL_ADMIN_TOKEN):
+curl -X POST -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN" \
+  "http://localhost:8000/api/admin/v1/feeds/nvd/run?lookback_days=7"
+```
 
 ## First tenant
 
