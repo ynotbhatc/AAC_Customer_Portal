@@ -3,12 +3,20 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # PostgreSQL — compliance_reader (read-only)
+    # PostgreSQL — compliance_reader (read-only, customer compliance DB)
     pg_host: str = "192.168.4.62"
     pg_port: int = 5432
     pg_database: str = "compliance"
     pg_user: str = "compliance_reader"
     pg_password: str
+
+    # PostgreSQL — portal's OWN database (tenants, cve_events, artifacts)
+    # Defaults to the same host but a different DB.
+    portal_pg_host: str = "192.168.4.62"
+    portal_pg_port: int = 5432
+    portal_pg_database: str = "aac_portal"
+    portal_pg_user: str = "aac_portal_app"
+    portal_pg_password: str = ""
 
     # AAP Controller
     aap_url: str = "https://192.168.4.62"
@@ -24,6 +32,9 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     allowed_origins: list[str] = ["http://localhost:3000"]
     debug: bool = False
+
+    # Operator-admin bearer token (gates tenant/token admin endpoints)
+    portal_admin_token: str = ""
 
     class Config:
         env_file = ".env"
