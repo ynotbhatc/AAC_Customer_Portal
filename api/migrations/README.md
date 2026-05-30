@@ -22,6 +22,8 @@ PGPASSWORD=change-me-portal psql \
 
 1. `001_cve_intelligence.sql` — tenants, tenant_tokens, tenant_inventory_catalog, tenant_pull_runs
 2. `002_cve_feeds.sql` — cve_events, cve_references, feed_runs
+3. `003_classification.sql` — buckets, vendors, bucket_vendor_links, cve_bucket_tags, cve_vendor_tags
+4. `003a_taxonomy_seed.sql` — initial bucket + vendor taxonomy (idempotent, safe to re-run after edits)
 
 ## Feed adapters
 
