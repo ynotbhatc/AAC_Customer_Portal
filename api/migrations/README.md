@@ -24,6 +24,12 @@ PGPASSWORD=change-me-portal psql \
 2. `002_cve_feeds.sql` — cve_events, cve_references, feed_runs
 3. `003_classification.sql` — buckets, vendors, bucket_vendor_links, cve_bucket_tags, cve_vendor_tags
 4. `003a_taxonomy_seed.sql` — initial bucket + vendor taxonomy (idempotent, safe to re-run after edits)
+5. `004_matching.sql` — tenant_enrollments, tenant_vendor_subscriptions, tenant_filter_preferences, tenant_cve_matches, match_runs + ALTER tenant_tokens ADD token_secret_plaintext
+
+⚠ 004 adds a `token_secret_plaintext` column on `tenant_tokens` so the
+portal can authenticate outbound calls to each tenant's AAC bridge. For
+v1 it's stored plaintext; production deployments must wrap with Fernet
+or KMS encryption-at-rest.
 
 ## Feed adapters
 

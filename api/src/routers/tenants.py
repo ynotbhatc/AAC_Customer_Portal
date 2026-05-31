@@ -167,8 +167,9 @@ async def create_token(
     row = await pool.fetchrow(
         """
         INSERT INTO tenant_tokens
-            (tenant_id, token_id, token_secret_hash, description, scopes)
-        VALUES ($1::uuid, $2, $3, $4, $5)
+            (tenant_id, token_id, token_secret_hash,
+             token_secret_plaintext, description, scopes)
+        VALUES ($1::uuid, $2, $3, $4, $5, $6)
         RETURNING id, tenant_id, token_id, description, scopes,
                   created_at, created_by, last_used_at,
                   revoked_at, revoked_reason
@@ -176,6 +177,7 @@ async def create_token(
         tenant_id,
         token_id,
         secret_hash,
+        token_secret,   # see 004_matching.sql header note re: outbound credential use
         body.description,
         body.scopes,
     )

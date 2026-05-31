@@ -20,7 +20,7 @@ from typing import Any
 from datetime import timedelta
 
 from ..core.portal_db import close_portal_pool, get_portal_pool
-from . import cisa_kev, classifier, nvd
+from . import cisa_kev, classifier, inventory_puller, matcher, nvd
 from .common import utcnow
 
 ADAPTERS = {
@@ -54,8 +54,15 @@ async def run_all(*, classify: bool = True, **kwargs: Any) -> dict[str, dict]:
 
 
 async def _main() -> int:
-    parser = argparse.ArgumentParser(description="Run portal CVE feed adapters")
-    parser.add_argument("source", choices=[*ADAPTERS.keys(), "all", "classify"])
+    parser = argparse.ArgumentParser(description="Run portal CVE feed adapters + matcher")
+    parser.add_argument(
+        "source",
+        choices=[*ADAPTERS.keys(), "all", "classify", "pull_inventory", "match", "cycle"],
+        help=(
+            "all=feeds only, classify=re-tag, pull_inventory=fetch each tenant's "
+            "catalog, match=run matcher for all tenants, cycle=feeds+classify+pull+match"
+        ),
+    )
     parser.add_argument("--lookback-days", type=int, default=2,
                         help="(nvd) days back from latest cursor when no prior run")
     parser.add_argument("--no-classify", action="store_true",
@@ -65,11 +72,23 @@ async def _main() -> int:
     args = parser.parse_args()
 
     try:
+        pool = await get_portal_pool()
         if args.source == "classify":
-            pool = await get_portal_pool()
             result = await classifier.classify_recent(
                 pool, full_rebuild=args.full_rebuild,
             )
+        elif args.source == "pull_inventory":
+            result = await inventory_puller.pull_all_tenants(pool)
+        elif args.source == "match":
+            result = await matcher.match_all_tenants(pool)
+        elif args.source == "cycle":
+            feeds_result = await run_all(
+                lookback_days=args.lookback_days,
+                classify=not args.no_classify,
+            )
+            pulls = await inventory_puller.pull_all_tenants(pool)
+            matches = await matcher.match_all_tenants(pool)
+            result = {"feeds": feeds_result, "pulls": pulls, "matches": matches}
         elif args.source == "all":
             result = await run_all(
                 lookback_days=args.lookback_days,

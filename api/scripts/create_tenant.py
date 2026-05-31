@@ -92,12 +92,13 @@ async def main() -> int:
                 """
                 INSERT INTO tenant_tokens
                     (tenant_id, token_id, token_secret_hash,
-                     description, created_by)
-                VALUES ($1, $2, $3, $4, $5)
+                     token_secret_plaintext, description, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 """,
                 tenant_row["id"],
                 token_id,
                 secret_hash,
+                token_secret,   # see 004_matching.sql header re: outbound use
                 args.token_desc,
                 args.created_by,
             )
