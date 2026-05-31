@@ -25,6 +25,7 @@ PGPASSWORD=change-me-portal psql \
 3. `003_classification.sql` — buckets, vendors, bucket_vendor_links, cve_bucket_tags, cve_vendor_tags
 4. `003a_taxonomy_seed.sql` — initial bucket + vendor taxonomy (idempotent, safe to re-run after edits)
 5. `004_matching.sql` — tenant_enrollments, tenant_vendor_subscriptions, tenant_filter_preferences, tenant_cve_matches, match_runs + ALTER tenant_tokens ADD token_secret_plaintext
+6. `005_cve_feed_api.sql` — cve_vendor_remediations (populated by future PSIRT adapters; v1 empty, schema present so feed router can join)
 
 ⚠ 004 adds a `token_secret_plaintext` column on `tenant_tokens` so the
 portal can authenticate outbound calls to each tenant's AAC bridge. For

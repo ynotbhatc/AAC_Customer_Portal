@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from src.core.config import get_settings
 from src.core.database import get_pool, close_pool
 from src.core.portal_db import get_portal_pool, close_portal_pool
-from src.routers import classification, compliance, enrollments, feeds, tenants
+from src.routers import classification, compliance, enrollments, feeds, portal_feed, tenants
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ app.include_router(feeds.router, prefix="/api")
 app.include_router(classification.router, prefix="/api")
 app.include_router(enrollments.router, prefix="/api")
 app.include_router(enrollments.ops_router, prefix="/api")
+app.include_router(portal_feed.router, prefix="/api")
 
 
 @app.get("/health")
