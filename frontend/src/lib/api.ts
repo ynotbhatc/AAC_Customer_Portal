@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosInstance } from "axios";
 import type {
   ComplianceResult,
   FrameworkSummary,
@@ -6,19 +6,63 @@ import type {
   ComplianceTrend,
   RemediationItem,
 } from "../types/compliance";
+import type {
+  Bucket,
+  CveEvent,
+  CveTags,
+  Enrollment,
+  FeedRun,
+  FeedSource,
+  FilterPreferences,
+  PortalCveItem,
+  PortalCveResponse,
+  PortalWhoAmI,
+  Severity,
+  Tenant,
+  TenantCreate,
+  TenantCveMatch,
+  TenantUpdate,
+  TokenCreateBody,
+  TokenCreated,
+  TokenInfo,
+  Vendor,
+  VendorSubscription,
+} from "../types/cve";
+import { getAdminToken, getTenantCreds } from "./auth";
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "/api",
-  withCredentials: true,
+const BASE = import.meta.env.VITE_API_URL ?? "/api";
+
+// ── public client (no auth) — for /api/compliance/* read-only ────────
+const api = axios.create({ baseURL: BASE, withCredentials: true });
+
+// ── admin client — bearer = PORTAL_ADMIN_TOKEN ───────────────────────
+const adminApi: AxiosInstance = axios.create({ baseURL: BASE });
+adminApi.interceptors.request.use((cfg) => {
+  const t = getAdminToken();
+  if (t) cfg.headers.Authorization = `Bearer ${t}`;
+  return cfg;
 });
 
-// ── Compliance Results ────────────────────────────────────────────────────────
+// ── tenant client — bearer = token_secret, X-Token-Id = token_id ─────
+const tenantApi: AxiosInstance = axios.create({ baseURL: BASE });
+tenantApi.interceptors.request.use((cfg) => {
+  const c = getTenantCreds();
+  if (c) {
+    cfg.headers.Authorization = `Bearer ${c.tokenSecret}`;
+    cfg.headers["X-Token-Id"] = c.tokenId;
+  }
+  return cfg;
+});
 
+// ── Compliance Results (legacy, no auth) ─────────────────────────────
 export const getResults = (params?: {
   hostname?: string;
   framework?: string;
   limit?: number;
-}) => api.get<ComplianceResult[]>("/compliance/results", { params }).then((r) => r.data);
+}) =>
+  api
+    .get<ComplianceResult[]>("/compliance/results", { params })
+    .then((r) => r.data);
 
 export const getResult = (id: number) =>
   api.get<ComplianceResult>(`/compliance/results/${id}`).then((r) => r.data);
@@ -33,9 +77,8 @@ export const getTrend = (params: {
   hostname?: string;
   framework: string;
   days?: number;
-}) => api.get<ComplianceTrend[]>("/compliance/trend", { params }).then((r) => r.data);
-
-// ── Remediation ───────────────────────────────────────────────────────────────
+}) =>
+  api.get<ComplianceTrend[]>("/compliance/trend", { params }).then((r) => r.data);
 
 export const getRemediationItems = (params?: {
   hostname?: string;
@@ -48,8 +91,6 @@ export const updateRemediationStatus = (
   id: string,
   status: RemediationItem["status"]
 ) => api.patch(`/remediation/${id}`, { status }).then((r) => r.data);
-
-// ── Reports ───────────────────────────────────────────────────────────────────
 
 export const downloadReport = async (params: {
   hostname?: string;
@@ -68,12 +109,225 @@ export const downloadReport = async (params: {
   URL.revokeObjectURL(url);
 };
 
-// ── AAP Actions ───────────────────────────────────────────────────────────────
-
 export const launchAssessment = (params: {
   hostname: string;
   framework: string;
   template_id: number;
 }) => api.post("/aap/launch", params).then((r) => r.data);
+
+// ── Admin: ping (used to validate the admin token on login) ───────────
+export const adminPing = async (): Promise<void> => {
+  // No dedicated /admin/ping endpoint; list_tenants with a 1-row probe.
+  await adminApi.get("/admin/v1/tenants");
+};
+
+// ── Admin: tenants ────────────────────────────────────────────────────
+export const listTenants = (includeDeleted = false) =>
+  adminApi
+    .get<Tenant[]>("/admin/v1/tenants", { params: { include_deleted: includeDeleted } })
+    .then((r) => r.data);
+
+export const getTenant = (id: string) =>
+  adminApi.get<Tenant>(`/admin/v1/tenants/${id}`).then((r) => r.data);
+
+export const createTenant = (body: TenantCreate) =>
+  adminApi.post<Tenant>("/admin/v1/tenants", body).then((r) => r.data);
+
+export const updateTenant = (id: string, body: TenantUpdate) =>
+  adminApi.patch<Tenant>(`/admin/v1/tenants/${id}`, body).then((r) => r.data);
+
+export const deleteTenant = (id: string) =>
+  adminApi.delete(`/admin/v1/tenants/${id}`).then((r) => r.data);
+
+// ── Admin: tokens ─────────────────────────────────────────────────────
+export const listTokens = (tenantId: string, includeRevoked = false) =>
+  adminApi
+    .get<TokenInfo[]>(`/admin/v1/tenants/${tenantId}/tokens`, {
+      params: { include_revoked: includeRevoked },
+    })
+    .then((r) => r.data);
+
+export const createToken = (tenantId: string, body: TokenCreateBody) =>
+  adminApi
+    .post<TokenCreated>(`/admin/v1/tenants/${tenantId}/tokens`, body)
+    .then((r) => r.data);
+
+export const revokeToken = (
+  tenantId: string,
+  tokenId: string,
+  reason: string
+) =>
+  adminApi
+    .post(`/admin/v1/tenants/${tenantId}/tokens/${tokenId}/revoke`, { reason })
+    .then((r) => r.data);
+
+// ── Admin: feeds ──────────────────────────────────────────────────────
+export const listFeedRuns = (params?: { source?: FeedSource; limit?: number }) =>
+  adminApi
+    .get<FeedRun[]>("/admin/v1/feeds/runs", { params })
+    .then((r) => r.data);
+
+export const triggerFeedRun = (source: FeedSource) =>
+  adminApi
+    .post<{ status: string }>(`/admin/v1/feeds/${source}/run`)
+    .then((r) => r.data);
+
+export const listCves = (params?: {
+  severity?: Severity;
+  kev_only?: boolean;
+  bucket?: string;
+  vendor?: string;
+  search?: string;
+  limit?: number;
+  cursor?: number;
+}) =>
+  adminApi
+    .get<CveEvent[]>("/admin/v1/feeds/cves", { params })
+    .then((r) => r.data);
+
+// ── Admin: classification ─────────────────────────────────────────────
+export const listBuckets = () =>
+  adminApi.get<Bucket[]>("/admin/v1/buckets").then((r) => r.data);
+
+export const listVendors = () =>
+  adminApi.get<Vendor[]>("/admin/v1/vendors").then((r) => r.data);
+
+export const getCveTags = (cveId: string) =>
+  adminApi.get<CveTags>(`/admin/v1/cves/${cveId}/tags`).then((r) => r.data);
+
+export const tagBucket = (cveId: string, bucketKey: string) =>
+  adminApi
+    .post(`/admin/v1/cves/${cveId}/tags/buckets/${bucketKey}`)
+    .then((r) => r.data);
+
+export const untagBucket = (cveId: string, bucketKey: string) =>
+  adminApi
+    .delete(`/admin/v1/cves/${cveId}/tags/buckets/${bucketKey}`)
+    .then((r) => r.data);
+
+export const tagVendor = (cveId: string, vendorKey: string) =>
+  adminApi
+    .post(`/admin/v1/cves/${cveId}/tags/vendors/${vendorKey}`)
+    .then((r) => r.data);
+
+export const untagVendor = (cveId: string, vendorKey: string) =>
+  adminApi
+    .delete(`/admin/v1/cves/${cveId}/tags/vendors/${vendorKey}`)
+    .then((r) => r.data);
+
+export const runClassifier = (full = false) =>
+  adminApi
+    .post<{ status: string; full_rebuild: boolean }>("/admin/v1/classify/run", null, {
+      params: { full },
+    })
+    .then((r) => r.data);
+
+// ── Admin: enrollments + preferences + matches per tenant ─────────────
+export const listEnrollments = (tenantId: string) =>
+  adminApi
+    .get<Enrollment[]>(`/admin/v1/tenants/${tenantId}/enrollments`)
+    .then((r) => r.data);
+
+export const enrollBucket = (tenantId: string, bucketKey: string) =>
+  adminApi
+    .post(`/admin/v1/tenants/${tenantId}/enrollments/${bucketKey}`)
+    .then((r) => r.data);
+
+export const unenrollBucket = (tenantId: string, bucketKey: string) =>
+  adminApi
+    .delete(`/admin/v1/tenants/${tenantId}/enrollments/${bucketKey}`)
+    .then((r) => r.data);
+
+export const listVendorSubscriptions = (tenantId: string) =>
+  adminApi
+    .get<VendorSubscription[]>(`/admin/v1/tenants/${tenantId}/vendor-subscriptions`)
+    .then((r) => r.data);
+
+export const setVendorSubscription = (
+  tenantId: string,
+  vendorKey: string,
+  allow: boolean
+) =>
+  adminApi
+    .put(`/admin/v1/tenants/${tenantId}/vendor-subscriptions/${vendorKey}`, { allow })
+    .then((r) => r.data);
+
+export const removeVendorSubscription = (tenantId: string, vendorKey: string) =>
+  adminApi
+    .delete(`/admin/v1/tenants/${tenantId}/vendor-subscriptions/${vendorKey}`)
+    .then((r) => r.data);
+
+export const getPreferences = (tenantId: string) =>
+  adminApi
+    .get<FilterPreferences>(`/admin/v1/tenants/${tenantId}/preferences`)
+    .then((r) => r.data);
+
+export const setPreferences = (tenantId: string, body: Partial<FilterPreferences>) =>
+  adminApi
+    .put<FilterPreferences>(`/admin/v1/tenants/${tenantId}/preferences`, body)
+    .then((r) => r.data);
+
+export const listMatches = (
+  tenantId: string,
+  params?: {
+    severity?: Severity;
+    kev_only?: boolean;
+    acknowledged?: boolean;
+    suppressed?: boolean;
+    limit?: number;
+  }
+) =>
+  adminApi
+    .get<TenantCveMatch[]>(`/admin/v1/tenants/${tenantId}/matches`, { params })
+    .then((r) => r.data);
+
+export const triggerInventoryPullForTenant = (tenantId: string) =>
+  adminApi
+    .post<{ status: string }>(`/admin/v1/tenants/${tenantId}/inventory/pull`)
+    .then((r) => r.data);
+
+export const triggerMatchForTenant = (tenantId: string) =>
+  adminApi
+    .post<{ status: string }>(`/admin/v1/tenants/${tenantId}/matches/run`)
+    .then((r) => r.data);
+
+// ── Tenant (per-tenant token): portal feed ───────────────────────────
+export const portalWhoAmI = (tenantId: string) =>
+  tenantApi
+    .get<PortalWhoAmI>(`/portal/v1/tenants/${tenantId}/whoami`)
+    .then((r) => r.data);
+
+export const portalListCves = (
+  tenantId: string,
+  params?: {
+    since?: string;
+    severity?: Severity;
+    kev_only?: boolean;
+    cursor?: number;
+    limit?: number;
+    include_acknowledged?: boolean;
+    include_suppressed?: boolean;
+  }
+) =>
+  tenantApi
+    .get<PortalCveResponse | PortalCveItem[]>(
+      `/portal/v1/tenants/${tenantId}/cves`,
+      { params }
+    )
+    .then((r) => r.data);
+
+export const portalAckCve = (tenantId: string, cveId: string) =>
+  tenantApi
+    .post(`/portal/v1/tenants/${tenantId}/cves/${cveId}/ack`)
+    .then((r) => r.data);
+
+export const portalSuppressCve = (
+  tenantId: string,
+  cveId: string,
+  reason: string
+) =>
+  tenantApi
+    .post(`/portal/v1/tenants/${tenantId}/cves/${cveId}/suppress`, { reason })
+    .then((r) => r.data);
 
 export default api;
