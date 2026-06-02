@@ -3,7 +3,7 @@
 **Audience:** Internal — AAC platform engineers, solution engineers, product, sales enablement, leadership.
 **Purpose:** Shared mental model of what the Portal is, what it offers customers, how it integrates with AAC, and where it's headed.
 **Drafted:** 2026-06-02
-**Version:** v2.0
+**Version:** v2.1
 
 ## Revision history
 
@@ -11,6 +11,7 @@
 |---|---|---|
 | v1.0 | 2026-06-02 | Initial draft — CVE-Intelligence-centric framing |
 | v2.0 | 2026-06-02 | Reframed: Portal is a **compliance-as-a-service hub**; CVE Intelligence is one product among several. Added SLAs, policy injection, compliance-framework enrollment, audit evidence, multi-framework reporting, IoC sharing as planned features. Feature inventory moved to §1 per user request. |
+| v2.1 | 2026-06-02 | Added seven roadmap pieces surfaced by user's portal-description email — customer-specific policy repo ingestion, "backup → patch → validate" normalized workflow contract, **SaaS / Cloud Services SLA monitoring** (new dimension), inventory-driven automatic enrollment, baselining outputs, technical-debt heat map UI, audit *certification* (signed authoritative bundles, distinct from evidence delivery). Each tied to an email function; status table extended (§11.2). |
 
 ---
 
@@ -65,11 +66,17 @@ Status keys: ✅ shipped on branch · 🟡 partial · ⏳ planned
 
 | Feature | Status | One-line value |
 |---|---|---|
-| Policy injection (push Rego bundles to enrolled tenants) | ⏳ | Operator ships a new framework (CIS M365 v4.1, custom corporate policy) once; every subscribed tenant gets it on next poll |
+| Policy injection — operator-pushed Rego bundles | ⏳ | Operator ships a new framework (CIS M365 v4.1, custom corporate policy) once; every subscribed tenant gets it on next poll |
+| **Customer-specific policy repo ingestion (consume from customer git)** | ⏳ | Inverted from operator-push: customer brings/manages their own policy repo; Portal syncs it. The two paths coexist — operator content for shared frameworks, customer content for org-specific rules |
 | Compliance-framework enrollment (CIS RHEL/Windows, CIS M365, NIST 800-53, ISO 27001, SOC 2, PCI-DSS, NERC-CIP, …) | ⏳ | Same enrollment-and-subscription model as CVE buckets, applied to frameworks. Tenant subscribes, AAC instance evaluates, Portal aggregates posture |
+| **Inventory-driven automatic enrollment** | ⏳ | Suggest frameworks based on what the customer runs ("you have M365 → CIS M365 Foundations"); customer confirms before enrollment fires. Rules engine over `tenant_inventory_catalog` |
+| **"Backup → Patch → Validate" normalized workflow contract** | ⏳ | Every remediation workflow follows the same three-step shape; vendor-specific Ansible roles slot into Patch. Spec + reference roles for RHEL / Windows / Cisco / VMware |
 | Multi-framework dashboards (per-tenant) | ⏳ | One screen across all enrolled frameworks; trends over time; drill-down |
 | Cross-tenant operator dashboards | ⏳ | Operator-side benchmarking and account-health view |
-| Audit evidence collection + delivery | ⏳ | Tenant requests evidence for framework + time range → Portal generates signed bundle (PDF + JSONB) for the auditor |
+| Audit evidence collection + delivery | ⏳ | Tenant requests evidence for framework + time range → Portal generates bundle (PDF + JSONB) for the auditor |
+| **Audit certification — signed authoritative bundles** | ⏳ | Distinct from evidence delivery: Portal signs the bundle as authoritative, attaches chain-of-custody (Rego SHA, OPA bundle version, inventory snapshot), output directly ingestible by 3PAO / auditor without further transformation |
+| **Baselining outputs (per-tenant baseline snapshots + diff)** | ⏳ | Point-in-time snapshot of (inventory × compliance × CVE matches); diff between two baselines answers "what changed since last audit?" |
+| **Technical-debt heat map UI** | ⏳ | Surfaces existing AAC `technical_debt` schema (per-domain rates, OT/IT budget separation) as a $-denominated remediation backlog visualized per BU / framework / vendor |
 | Historical compliance API (read over `compliance_results`) | ✅ | Existing endpoint set from pre-CVE work; React surface pending |
 
 ### 1.4 Operational guarantees — SLAs, status, billing
@@ -85,7 +92,15 @@ Status keys: ✅ shipped on branch · 🟡 partial · ⏳ planned
 | Air-gap bundle pipeline (signed offline feed) | ⏳ | Defense / sovereign customers — strategic margin |
 | Multi-region deployment (GDPR data residency) | ⏳ | Required for some EU customers |
 
-### 1.5 Threat-intel adjacencies — roadmap
+### 1.5 SaaS / Cloud Services SLA monitoring — new dimension
+
+| Feature | Status | One-line value |
+|---|---|---|
+| **SaaS / Cloud SLA monitoring** | ⏳ | Monitor whether the customer's contracted SaaS / cloud providers (AWS, Azure, M365, GitHub, etc.) are meeting *their* SLAs. Data: vendor health APIs + customer-supplied probes. Output: SLA breach events, dashboard, audit-evidence inclusion |
+| Vendor SLA contract registry | ⏳ | Per-tenant store of "what SLA did the customer sign with each vendor" so the monitor knows the threshold to evaluate against |
+| SLA-breach correlation with compliance findings | ⏳ | Connect SLA breaches to the compliance controls they impact (e.g. an availability-SLA breach is evidence for the auditor that the BCP control failed) |
+
+### 1.6 Threat-intel adjacencies — roadmap
 
 | Feature | Status | One-line value |
 |---|---|---|
@@ -631,33 +646,40 @@ A pre-sales conversation about hierarchy is mandatory.
 
 ### 11.2 Compliance-as-a-service — next block (⏳)
 
-| # | Piece | Status |
-|---|---|---|
-| 12 | RHSA / USN / KB feed adapters (vendor remediations) | ⏳ planned |
-| 13 | Policy bundle hosting + signature scheme | ⏳ planned (depends on AAC task #45) |
-| 14 | Customer-side policy bundle pull (bridge) | ⏳ planned |
-| 15 | Framework enrollment schema + API | ⏳ planned |
-| 16 | Posture rollup ingest + API | ⏳ planned |
-| 17 | Multi-framework dashboard (React) | ⏳ planned |
-| 18 | Cross-tenant operator dashboard (React) | ⏳ planned |
-| 19 | Audit evidence schema + signed bundle generator | ⏳ planned |
+| # | Piece | Status | Email function |
+|---|---|---|---|
+| 12 | RHSA / USN / KB feed adapters (vendor remediations) | ⏳ planned | #2 (CVE remediation enablement) |
+| 13 | Policy bundle hosting + signature scheme (operator-pushed) | ⏳ planned (depends on AAC task #45) | #1 |
+| 14 | Customer-side policy bundle pull (bridge) | ⏳ planned | #1 |
+| 15 | Framework enrollment schema + API | ⏳ planned | #3 |
+| 16 | Posture rollup ingest + API | ⏳ planned | #5 |
+| 17 | Multi-framework dashboard (React) | ⏳ planned | #5 |
+| 18 | Cross-tenant operator dashboard (React) | ⏳ planned | #5 |
+| 19 | Audit evidence schema + signed bundle generator | ⏳ planned | #5 |
+| **20** | **Customer-specific policy repo ingestion** (consume from customer's git, distinct from operator-pushed bundles in #13) | ⏳ planned | **#1** |
+| **21** | **"Backup → Patch → Validate" normalized workflow contract** + reference per-vendor roles | ⏳ planned | **#2** |
+| **22** | **SaaS / Cloud Services SLA monitoring** (AWS Health, Azure Service Health, M365 Service Status + custom probes) | ⏳ planned | **#4** |
+| **23** | **Inventory-driven automatic enrollment** (suggest frameworks based on what the customer runs) | ⏳ planned | **#3** |
+| **24** | **Baselining outputs** (per-tenant point-in-time snapshots + baseline diff) | ⏳ planned | **#6** |
+| **25** | **Technical-debt heat map UI** (surfaces existing AAC technical_debt schema in the Portal) | ⏳ planned | **#6** |
+| **26** | **Audit certification** — signed authoritative bundles with chain-of-custody (distinct from #19 evidence delivery) | ⏳ planned | **#5** |
 
 ### 11.3 Operational + commercial — required for GA
 
 | # | Piece | Status |
 |---|---|---|
-| 20 | Tier enforcement middleware | ⏳ planned |
-| 21 | Documented SLAs per tier | ⏳ commercial decision |
-| 22 | Public status page | ⏳ planned |
-| 23 | Operator observability (Prometheus) | ⏳ planned |
-| 24 | Backup + DR playbook (multi-tenant selective restore) | ⏳ planned |
-| 25 | Billing surface | ⏳ depends on pricing model |
-| 26 | Air-gap bundle pipeline | ⏳ planned |
-| 27 | Multi-region deployment (GDPR) | ⏳ planned |
-| 28 | Auto-classifier ML upgrade | ⏳ planned |
-| 29 | Vendor PSIRT direct adapters | ⏳ planned |
-| 30 | SBOM ingestion (CycloneDX / SPDX) | ⏳ planned |
-| 31 | IoC / threat-intel sharing | ⏳ planned |
+| 27 | Tier enforcement middleware | ⏳ planned |
+| 28 | Documented SLAs per tier (the Portal's own SLAs to tenants — distinct from #22) | ⏳ commercial decision |
+| 29 | Public status page | ⏳ planned |
+| 30 | Operator observability (Prometheus) | ⏳ planned |
+| 31 | Backup + DR playbook (multi-tenant selective restore) | ⏳ planned |
+| 32 | Billing surface | ⏳ depends on pricing model |
+| 33 | Air-gap bundle pipeline | ⏳ planned |
+| 34 | Multi-region deployment (GDPR) | ⏳ planned |
+| 35 | Auto-classifier ML upgrade | ⏳ planned |
+| 36 | Vendor PSIRT direct adapters | ⏳ planned |
+| 37 | SBOM ingestion (CycloneDX / SPDX) | ⏳ planned |
+| 38 | IoC / threat-intel sharing | ⏳ planned |
 
 ### 11.4 Open PRs at time of writing (2026-06-02)
 
