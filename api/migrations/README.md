@@ -26,6 +26,7 @@ PGPASSWORD=change-me-portal psql \
 4. `003a_taxonomy_seed.sql` — initial bucket + vendor taxonomy (idempotent, safe to re-run after edits)
 5. `004_matching.sql` — tenant_enrollments, tenant_vendor_subscriptions, tenant_filter_preferences, tenant_cve_matches, match_runs + ALTER tenant_tokens ADD token_secret_plaintext
 6. `005_cve_feed_api.sql` — cve_vendor_remediations (populated by future PSIRT adapters; v1 empty, schema present so feed router can join)
+7. `006_policy_ingestion.sql` — tenant_users, tenant_user_mfa_factors, customer_policies, customer_policy_targets, abstract_controls, target_mappings, policy_audit_log. Schema foundation for the customer policy ingestion feature (Piece 46 / task #46) — see `docs/policy_ingestion_design.md`. Enables the `citext` extension. Adds Tier 1 governance columns on `customer_policies` (control owner, review cadence) that are populated in Phase 7+; MVP code paths ignore them.
 
 ⚠ 004 adds a `token_secret_plaintext` column on `tenant_tokens` so the
 portal can authenticate outbound calls to each tenant's AAC bridge. For
