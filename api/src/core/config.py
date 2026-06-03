@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     password_reset_lifetime_hours: int = 24   # reset link valid window
     password_min_length: int = 12
 
+    # Policy document upload limits (Phase 2 — Path A ingestion)
+    max_upload_bytes: int = 15 * 1024 * 1024  # 15 MiB
+    parser_timeout_seconds: int = 30
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
