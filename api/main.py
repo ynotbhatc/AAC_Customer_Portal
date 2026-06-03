@@ -12,6 +12,7 @@ from src.routers import (
     enrollments,
     feeds,
     me,
+    me_mfa,
     portal_feed,
     tenant_users,
     tenants,
@@ -54,6 +55,7 @@ app.include_router(enrollments.ops_router, prefix="/api")
 app.include_router(portal_feed.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
+app.include_router(me_mfa.router, prefix="/api")
 
 
 @app.get("/health")
