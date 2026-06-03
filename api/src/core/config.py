@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # Operator-admin bearer token (gates tenant/token admin endpoints)
     portal_admin_token: str = ""
 
+    # Tenant-user session policy
+    session_lifetime_hours: int = 12          # session expires after this
+    password_reset_lifetime_hours: int = 24   # reset link valid window
+    password_min_length: int = 12
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

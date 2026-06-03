@@ -16,14 +16,19 @@ provable on audit.
 """
 from __future__ import annotations
 
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
 import asyncpg
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from ..core.auth import require_admin
+from ..core.config import get_settings
 from ..core.portal_db import get_portal_pool
+from ..models.tenant_session import PasswordResetIssued
 from ..models.tenant_user import TenantUser, TenantUserCreate, TenantUserUpdate
 
 router = APIRouter(
@@ -274,3 +279,63 @@ async def enable_tenant_user(
             raise HTTPException(status_code=404, detail="user not found")
         raise HTTPException(status_code=409, detail="user is not disabled")
     return dict(row)
+
+
+@router.post(
+    "/{tenant_id}/users/{user_id}/issue-password-reset",
+    response_model=PasswordResetIssued,
+    status_code=201,
+)
+async def issue_password_reset(
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    tenant_id: UUID = Path(...),
+    user_id: UUID = Path(...),
+) -> PasswordResetIssued:
+    """Operator-side endpoint for creating a single-use password-reset
+    token. The plaintext token is returned ONCE; the operator hands it
+    to the tenant user out-of-band (email, ticket comment, etc.) and
+    the user redeems it at POST /portal/v1/auth/password-reset/confirm.
+
+    Any pending (un-used) resets for the same user are silently
+    invalidated — only the newest token can be redeemed."""
+    target = await pool.fetchrow(
+        "SELECT id FROM tenant_users WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL",
+        user_id,
+        tenant_id,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="user not found or disabled")
+
+    s = get_settings()
+    secret = secrets.token_urlsafe(32)  # 256 bits
+    hashed = bcrypt.hashpw(secret.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+    expires = datetime.now(tz=timezone.utc) + timedelta(hours=s.password_reset_lifetime_hours)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Invalidate prior pending resets so the operator can't
+            # accidentally hand out two live tokens.
+            await conn.execute(
+                """
+                UPDATE tenant_user_password_resets
+                   SET used_at = now()
+                 WHERE tenant_user_id = $1 AND used_at IS NULL
+                """,
+                user_id,
+            )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO tenant_user_password_resets
+                    (tenant_user_id, token_hash, expires_at, issued_by_admin)
+                VALUES ($1, $2, $3, true)
+                RETURNING id, expires_at
+                """,
+                user_id,
+                hashed,
+                expires,
+            )
+
+    return PasswordResetIssued(
+        reset_token=f"{row['id']}.{secret}",
+        expires_at=row["expires_at"],
+    )

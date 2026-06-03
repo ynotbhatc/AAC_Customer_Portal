@@ -10,10 +10,12 @@ Two-part design:
    the authenticated tenant_user's role is at or above `min_role` in
    the ordered hierarchy.
 
-This module is intentionally narrow. Session/login (the thing that
-produces the tenant_user dict the dependency reads) is added in PR 3
-alongside TOTP MFA. PR 2 only ships the role helper so PR 4's policy
-endpoints can be authored against a stable interface.
+Pulls the authenticated tenant_user from `core.sessions.require_tenant_user`
+(PR 3). TOTP MFA enforcement is added separately in PR 4 — `require_role`
+itself only checks role rank, not whether the session's MFA step has
+been completed. Endpoints that need MFA must additionally check
+`tenant_user['mfa_verified']` or use the `require_mfa_verified` helper
+that lands with PR 4.
 
 Role hierarchy (least → most privileged):
     viewer < editor < account_owner
@@ -26,6 +28,8 @@ from enum import IntEnum
 from typing import Any, Callable, Coroutine
 
 from fastapi import Depends, HTTPException
+
+from .sessions import require_tenant_user
 
 
 class Role(IntEnum):
@@ -78,15 +82,13 @@ def require_role(min_role: str) -> Callable[..., Coroutine[Any, Any, dict[str, A
         async def create_policy(...):
             ...
 
-    Until PR 3 wires the session dependency, calling this from a
-    router would 503 — that's fine, no router uses it yet.
     """
     # Validate at import time so a typo surfaces immediately, not at
     # first request.
     _ = Role.from_str(min_role)
 
     async def _checker(
-        tenant_user: dict[str, Any] = Depends(_current_tenant_user_placeholder),
+        tenant_user: dict[str, Any] = Depends(require_tenant_user),
     ) -> dict[str, Any]:
         actor_role = tenant_user.get("role")
         if not actor_role or not has_role(actor_role, min_role):
@@ -97,17 +99,3 @@ def require_role(min_role: str) -> Callable[..., Coroutine[Any, Any, dict[str, A
         return tenant_user
 
     return _checker
-
-
-async def _current_tenant_user_placeholder() -> dict[str, Any]:
-    """Placeholder until PR 3 provides the real session dependency.
-
-    Any router that depends on require_role() before PR 3 lands will
-    surface a clear 503 instead of silently returning anonymous-shaped
-    dicts. PR 3 will replace this import path with the real session
-    resolver.
-    """
-    raise HTTPException(
-        status_code=503,
-        detail="tenant_user session not configured — PR 3 (session + MFA) not yet landed",
-    )
