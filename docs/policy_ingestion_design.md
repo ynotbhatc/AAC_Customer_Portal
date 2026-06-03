@@ -6,7 +6,7 @@ feature (Piece 46 in `portal_capabilities_brief.md` §11.2 /
 TaskCreate #46). Defines what we build for the MVP, what we defer,
 and the decisions we'll revisit as real usage informs them.
 **Drafted:** 2026-06-02
-**Version:** v1.2
+**Version:** v1.3
 
 ## Revision history
 
@@ -14,7 +14,8 @@ and the decisions we'll revisit as real usage informs them.
 |---|---|---|
 | v1.0 | 2026-06-02 | Initial MVP design. Bidirectional ingestion (prose-to-Rego + fork-and-tweak); hybrid conversion (template + LLM fallback); per-customer Rego buckets organized by compliance framework; Portal-side bundle assembly; drift detection against the standard `rego_policy_libraries`; RBAC (Account Owner / Editor / Viewer) with TOTP + WebAuthn MFA. |
 | v1.1 | 2026-06-02 | **Reframed as the full compliance loop**, not just conversion. The Portal now owns the complete sequence: written policy → Rego → live assessment → gap mitigation playbooks → golden image generation → ongoing assessment → audit-ready reports. Added §19 (closed loop), §20 (audit reports), extended phased plan to 7 phases. Same MVP boundary (Phases 1-4); the loop extensions are Phases 5-7. |
-| v1.2 | 2026-06-02 | **Audit-readiness expansion** — added Tier 1 governance fields (control owner, periodic review, exception management, risk linkage) to the existing data model + API + workflow (no new phase; absorbed into Phase 1-2). New §22 audit coverage analysis maps current + planned features against SOC 2 Trust Services Criteria, ISO 27001:2022 Annex A, and NIST 800-53 Rev 5 control families — buyer-facing answer to "is the Portal audit-ready for framework X?" Out-of-scope items explicitly marked as "integrate, don't build" (TPRM, BCP, IAM tools). |
+| v1.2 | 2026-06-02 | **Audit-readiness expansion** — added Tier 1 governance fields (control owner, periodic review, exception management, risk linkage) to the existing data model + API + workflow. New §22 audit coverage analysis maps current + planned features against SOC 2 / ISO 27001 / NIST 800-53. Out-of-scope items explicitly marked as "integrate, don't build" (TPRM, BCP, IAM tools). |
+| v1.3 | 2026-06-02 | **"Measurable first" prioritization.** Added §2.1 principle: technology-state controls (objectively measurable — file permissions, service configs, audit settings, encryption flags) are sequenced ahead of administrative controls (training records, periodic-review processes, risk register, vendor risk). **The Tier 1 governance additions from v1.2 (§23) are re-sequenced from Phase 1-2 (MVP) to Phase 7+ (post-measurable-layer).** §22 phased plan and §24 audit coverage scorecard updated. The MVP (Phases 1-4) is now strictly the technology-state loop: prose → IR → Rego → assessment → bundle delivery. Administrative governance overlays follow once the measurable layer is in production with paying customers. |
 
 ---
 
@@ -62,6 +63,40 @@ Concretely, that means:
 A simple test for any new MVP code: **if the same interface couldn't
 hold the Phase 6 (golden image), Phase 7 (audit reports), or Tier 2
 (training records) extensions, we're doing the MVP wrong.**
+
+### 2.1 Sub-principle — measurable first
+
+> **The first things we automate are the things we can objectively
+> measure.** Technology states — file permissions, service configs,
+> password policy settings, audit log enablement, encryption flags,
+> open ports, registry values, network device running-configs — are
+> binary, observable, comparable. They produce evidence with no human
+> judgment in the middle.
+>
+> Administrative controls — training completeness, periodic-review
+> processes, incident response procedures, vendor risk assessments,
+> BCP testing — require process attestations rather than measurement.
+> They matter. They belong **after** the measurable layer ships.
+
+What this means for the phased plan in §22:
+
+| | Layer | Examples | Where in plan |
+|---|---|---|---|
+| **Measurable** | Technology states | Password length, audit-log retention, SSH config, disk encryption, service hardening | **MVP — Phases 1-4** |
+| **Measurable** | Remediation of measurable states | Apply Ansible role → re-run Rego → confirm | **Phase 5** (`remediation_generator_design.md`) |
+| **Measurable** | Pre-compliant new systems | Golden image baked to the policy | **Phase 6** |
+| **Mixed** | Audit-ready policy reports | The narrative around measurable evidence | **Phase 7** |
+| **Administrative** | Tier 1 governance overlays (control owner, periodic review, exceptions, risk linkage) | Process attestations about the measurable layer | **Phase 8** (re-sequenced from v1.2's "absorbed into Phase 1-2") |
+| **Administrative** | Tier 2 (training, incidents) | Process attestations beyond policy | **Phase 9+** |
+| **Administrative** | Tier 3 (TPRM, BCP, IAM) | Integrations with existing GRC stack | **Integrate, don't build** |
+
+The Tier 1 governance schema fields (`control_owner_user_id`,
+`review_cadence_days`, `next_review_due_at`, `last_reviewed_at`,
+`last_reviewed_by`) remain in the v1.2 schema design — **but are not
+populated or surfaced in the MVP UI.** Phase 1-2 implements the
+columns as nullable; Phase 8 builds the governance workflows around
+them. This keeps the schema forward-compatible without adding MVP UI
+work that doesn't move the measurable-first needle.
 
 ---
 
@@ -916,17 +951,57 @@ That's an end-to-end story no Excel-and-screenshot audit prep can match.
 - Direct-to-auditor delivery options (S3, SFTP, signed link)
 - Portal-side certification artifacts ingestion (SOC 2 ref, pentest ref, SBOM)
 
+### Phase 8 — Tier 1 governance overlays (sprints 15-16) — re-sequenced from v1.2
+
+Per the "measurable first" sub-principle (§2.1), the Tier 1
+governance work described in §23 is built **after** the measurable
+layer (Phases 1-7) is in production with paying customers.
+
+- Activate control_owner_user_id workflows (assignment + reassignment + reminder)
+- Periodic-review cron + escalation cadence
+- policy_events table workflows for exception management
+- risk_links + customer_risks UI + GRC import API
+- Frontend pages for governance views
+
+### Phase 9+ — Tier 2 governance + future loop extensions
+
+Phase ordering and content TBD by Phase 1-7 customer signal. Candidates
+(in no particular order): training records / re-attestation; incident
+register; vendor risk integrations; multi-region deployment;
+SBOM-based supply chain controls.
+
 ### Total
 
-**14 sprints / ~28 weeks** to ship the full loop. Phases 1-4 (~16 weeks) deliver an MVP that proves the architecture and onboards first customers; Phases 5-7 build the strategic moat.
+**16 sprints / ~32 weeks** to ship the measurable layer + governance
+overlays:
+
+- **Phases 1-4 (~16 weeks)** = MVP. Strictly the technology-state
+  loop (prose → IR → Rego → assessment → bundle delivery). Proves
+  the architecture; onboards first customers.
+- **Phases 5-7 (~12 weeks)** = the measurable loop complete:
+  remediation + golden images + audit reports. Ships the strategic
+  moat — the buyer can show their auditor objective evidence for
+  every measurable claim they make.
+- **Phase 8 (~4 weeks)** = administrative governance overlays on
+  top of a working measurable layer.
 
 ---
 
 ## 23. Tier 1 governance additions — extensible patterns
 
-The MVP adds these governance surfaces as **first-class extensible
-patterns**, not bolt-ons, per the §2 principle. Each one is designed
-so Tier 2 and Tier 3 expansions are pure additions.
+> **v1.3 status: re-sequenced to Phase 8 per the "measurable first"
+> sub-principle (§2.1).** The schema fields below are added in Phase
+> 1-2 as nullable columns + tables to keep the data model
+> forward-compatible. **The workflows, UI, and cron jobs described
+> in this section are deferred to Phase 8** — after the measurable
+> layer (Phases 1-7) is in production with paying customers.
+>
+> This section is preserved as the spec for what gets built when
+> Phase 8 starts, not what ships in MVP.
+
+The Phase 8 governance surfaces are designed as **first-class
+extensible patterns**, not bolt-ons, per the §2 principle. Each one
+is designed so Tier 2 and Tier 3 expansions are pure additions.
 
 ### 23.1 Control ownership
 
