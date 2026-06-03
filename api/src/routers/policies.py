@@ -36,11 +36,18 @@ from ..core.document_parser import (
     extract_text,
     sniff_mime,
 )
+from ..core.ir_extractor import (
+    InputTooLong,
+    IrValidationError,
+    extract_ir,
+)
+from ..core.llm_client import LlmError, get_llm_client
 from ..core.portal_db import get_portal_pool
 from ..core.sessions import require_tenant_user_mfa
 from ..models.customer_policy import (
     CustomerPolicyDetail,
     CustomerPolicySummary,
+    IRExtractionResponse,
     UploadAccepted,
 )
 
@@ -227,3 +234,125 @@ async def get_policy(
     if row is None:
         raise HTTPException(status_code=404, detail="policy not found")
     return dict(row)
+
+
+@router.post(
+    "/{policy_id}/extract-ir",
+    response_model=IRExtractionResponse,
+    status_code=200,
+)
+async def extract_policy_ir(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+) -> IRExtractionResponse:
+    """Run the LLM IR extractor against a draft customer_policies row.
+
+    Reads the parsed text from policy_uploads via the policy's
+    `source_file_storage_key`, calls the LLM under tool use, validates
+    the structured response, writes it back to `customer_policies.ir_json`,
+    and emits a policy_audit_log entry.
+
+    Idempotent in effect: re-running on the same policy overwrites the
+    previous IR. The deterministic source-offset ordering means the
+    new vs old IR diff is readable in the review UI.
+    """
+    policy = await pool.fetchrow(
+        """
+        SELECT id, source_file_storage_key, policy_source
+          FROM customer_policies
+         WHERE id = $1 AND tenant_id = $2
+        """,
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if policy is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    if policy["policy_source"] != "prose_upload":
+        raise HTTPException(
+            status_code=409,
+            detail=f"IR extraction only applies to prose_upload "
+            f"policies; this is {policy['policy_source']}",
+        )
+    key = policy["source_file_storage_key"]
+    if not key or not key.startswith("pgupload:"):
+        raise HTTPException(
+            status_code=409,
+            detail="policy has no extractable source in the MVP store",
+        )
+    upload_id = key.split(":", 1)[1]
+
+    upload = await pool.fetchrow(
+        """
+        SELECT extracted_text FROM policy_uploads
+         WHERE id = $1::uuid AND tenant_id = $2
+        """,
+        upload_id,
+        tenant_user["tenant_id"],
+    )
+    if upload is None:
+        raise HTTPException(status_code=500, detail="upload row missing")
+
+    try:
+        llm = get_llm_client()
+    except LlmError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        ir = await extract_ir(parsed_text=upload["extracted_text"], llm=llm, pool=pool)
+    except InputTooLong as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except IrValidationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LlmError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    ir_dict = ir.model_dump(mode="json")
+    matched = sum(1 for c in ir.controls if c.abstract_control_key is not None)
+    freeform = len(ir.controls) - matched
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE customer_policies
+                   SET ir_json = $1::jsonb
+                 WHERE id = $2 AND tenant_id = $3
+                """,
+                ir_dict,
+                policy_id,
+                tenant_user["tenant_id"],
+            )
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'ir_extracted',
+                        jsonb_build_object(
+                            'model', $4::text,
+                            'control_count', $5::int,
+                            'controls_matched_library', $6::int,
+                            'controls_freeform', $7::int,
+                            'input_tokens', $8::int,
+                            'output_tokens', $9::int))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                policy_id,
+                ir.extraction_meta.model,
+                len(ir.controls),
+                matched,
+                freeform,
+                ir.extraction_meta.input_tokens,
+                ir.extraction_meta.output_tokens,
+            )
+
+    return IRExtractionResponse(
+        customer_policy_id=policy_id,
+        schema_version=ir.schema_version,
+        control_count=len(ir.controls),
+        controls_matched_library=matched,
+        controls_freeform=freeform,
+        ir_json=ir_dict,
+    )
