@@ -5,7 +5,15 @@ from contextlib import asynccontextmanager
 from src.core.config import get_settings
 from src.core.database import get_pool, close_pool
 from src.core.portal_db import get_portal_pool, close_portal_pool
-from src.routers import classification, compliance, enrollments, feeds, portal_feed, tenants
+from src.routers import (
+    classification,
+    compliance,
+    enrollments,
+    feeds,
+    portal_feed,
+    tenant_users,
+    tenants,
+)
 
 
 @asynccontextmanager
@@ -36,6 +44,7 @@ app.add_middleware(
 
 app.include_router(compliance.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")
+app.include_router(tenant_users.router, prefix="/api")
 app.include_router(feeds.router, prefix="/api")
 app.include_router(classification.router, prefix="/api")
 app.include_router(enrollments.router, prefix="/api")
