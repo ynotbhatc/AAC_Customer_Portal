@@ -6,7 +6,7 @@ feature (Piece 46 in `portal_capabilities_brief.md` §11.2 /
 TaskCreate #46). Defines what we build for the MVP, what we defer,
 and the decisions we'll revisit as real usage informs them.
 **Drafted:** 2026-06-02
-**Version:** v1.1
+**Version:** v1.2
 
 ## Revision history
 
@@ -14,6 +14,7 @@ and the decisions we'll revisit as real usage informs them.
 |---|---|---|
 | v1.0 | 2026-06-02 | Initial MVP design. Bidirectional ingestion (prose-to-Rego + fork-and-tweak); hybrid conversion (template + LLM fallback); per-customer Rego buckets organized by compliance framework; Portal-side bundle assembly; drift detection against the standard `rego_policy_libraries`; RBAC (Account Owner / Editor / Viewer) with TOTP + WebAuthn MFA. |
 | v1.1 | 2026-06-02 | **Reframed as the full compliance loop**, not just conversion. The Portal now owns the complete sequence: written policy → Rego → live assessment → gap mitigation playbooks → golden image generation → ongoing assessment → audit-ready reports. Added §19 (closed loop), §20 (audit reports), extended phased plan to 7 phases. Same MVP boundary (Phases 1-4); the loop extensions are Phases 5-7. |
+| v1.2 | 2026-06-02 | **Audit-readiness expansion** — added Tier 1 governance fields (control owner, periodic review, exception management, risk linkage) to the existing data model + API + workflow (no new phase; absorbed into Phase 1-2). New §22 audit coverage analysis maps current + planned features against SOC 2 Trust Services Criteria, ISO 27001:2022 Annex A, and NIST 800-53 Rev 5 control families — buyer-facing answer to "is the Portal audit-ready for framework X?" Out-of-scope items explicitly marked as "integrate, don't build" (TPRM, BCP, IAM tools). |
 
 ---
 
@@ -34,7 +35,37 @@ From the customer conversation that drove this design:
 
 ---
 
-## 2. MVP scope
+## 2. Design principles — MVP must not limit the final product
+
+Before any technical detail, the binding constraint on every MVP
+choice in this document:
+
+> **The MVP must not foreclose any future product surface.** Every
+> schema, API, and component decision in Phases 1-4 must be a
+> *strict subset* of what the full compliance loop (Phases 5-7) and
+> governance expansion (Tier 1-2-3 in §22) need. We can ship less,
+> not differently.
+
+Concretely, that means:
+
+| Concern | How MVP stays unconstrained |
+|---|---|
+| **Storage** | Abstract over the artifact store. MVP uses Portal-hosted git per tenant; the same `BundleStore` interface is implementable against customer-hosted git (Premium tier), an S3-compatible object store (air-gap bundle pipeline), or a delegated-to-customer git repo. No SQL or API change required to swap. |
+| **Bundle assembly** | The assembler runs as a standalone service called by both Portal-side flows (MVP) AND customer-side bridge flows (later air-gap tier). Same code path, different invocation. |
+| **IR schema** | JSON Schema-versioned. `ir.schema_version` field on every IR document. New schema versions are additive; old documents still parse. Lets us introduce richer control expressions (conditional logic, multi-step checks, time-windowed evaluation) without rewriting the conversion pipeline. |
+| **RBAC** | Role checks go through a `policy_engine.evaluate(actor, action, resource)` call — not hardcoded `if/else`. MVP supplies three roles via a built-in policy bundle; later we can plug in more granular permissions (per-framework admin, per-policy ownership, custom roles) by adding rules, not by changing call sites. |
+| **MFA factors** | All factor types implement a single `MfaFactor` interface (`enroll`, `challenge`, `verify`). MVP ships TOTP + WebAuthn; later FIDO2 / passkey-only / certificate-based factors add without changing the login flow. |
+| **LLM provider** | One `LlmClient` interface. MVP wires Anthropic Claude; OpenAI / Azure OpenAI / on-prem (Ollama) implementations cost an adapter, not a rewrite. |
+| **Audit report format** | The report generator works from a `ReportData` value object. DOCX, PDF, JSON for MVP; HTML, XBRL, CSV, custom-auditor formats all add by writing a new renderer. |
+| **Governance fields** | The Tier 1 governance additions (control owner, periodic review, exceptions, risk linkage — §6 and §22) are designed as polymorphic patterns from day one. `policy_events` is a base table for exceptions/incidents/deviations; `risk_links` is a polymorphic many-to-many that can link policies to risks, controls, vendors, or future entities. No "this is one-off for SOC 2" code paths. |
+
+A simple test for any new MVP code: **if the same interface couldn't
+hold the Phase 6 (golden image), Phase 7 (audit reports), or Tier 2
+(training records) extensions, we're doing the MVP wrong.**
+
+---
+
+## 3. MVP scope
 
 The minimum-viable feature set we commit to in this design — tweakable
 as real usage informs us:
@@ -51,7 +82,7 @@ as real usage informs us:
 
 ---
 
-## 3. Architecture
+## 4. Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -116,7 +147,7 @@ as real usage informs us:
 
 ---
 
-## 4. The two ingestion paths
+## 5. The two ingestion paths
 
 ### Path A — prose-to-Rego
 
@@ -144,7 +175,7 @@ User journey:
 
 ---
 
-## 5. Bucket organization
+## 6. Bucket organization
 
 Per-tenant git repo, structured by framework:
 
@@ -172,7 +203,7 @@ Convention:
 
 ---
 
-## 6. Data model (new tables)
+## 7. Data model (new tables)
 
 ### `customer_policies`
 
@@ -193,6 +224,11 @@ The parent: one row per **uploaded prose document** or **fork-and-tweak initiati
 | `version_semver` | text | Customer's policy version (e.g., `v1.0`, `v1.1`) |
 | `effective_date` | date | Customer-supplied effective date |
 | `status` | enum | `draft`, `in_review`, `published`, `archived` |
+| **`control_owner_user_id`** | uuid | FK → tenant_users. Accountable owner (governance Tier 1 — every framework asks "who owns this control?") |
+| **`review_cadence_days`** | int | Default 365. Frequency the customer's process requires this policy to be reviewed. |
+| **`next_review_due_at`** | timestamptz | Computed = published_at + review_cadence_days. Drives the periodic-review reminder workflow (§12). |
+| **`last_reviewed_at`** | timestamptz | Stamped when a tenant user explicitly attests "reviewed, no change needed" — distinct from publishing a new version |
+| **`last_reviewed_by`** | uuid | FK → tenant_users |
 | `created_by` | uuid | FK → tenant_users |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
@@ -284,7 +320,7 @@ Shared library: `(abstract_control × target_system) → Rego generation templat
 
 ---
 
-## 7. API surface (new endpoints)
+## 8. API surface (new endpoints)
 
 All scoped under `/api/portal/v1/tenants/{tenant_id}/policies/` and `/api/portal/v1/tenants/{tenant_id}/users/`. Auth: per-tenant bearer + per-user OIDC + MFA challenge for write operations.
 
@@ -314,7 +350,7 @@ All scoped under `/api/portal/v1/tenants/{tenant_id}/policies/` and `/api/portal
 
 ---
 
-## 8. RBAC
+## 9. RBAC
 
 Three roles for MVP. Role checks happen in FastAPI dependency middleware on every write endpoint.
 
@@ -338,7 +374,7 @@ Two distinct roles among writers (Owner vs Editor) because customers running com
 
 ---
 
-## 9. Authentication + MFA
+## 10. Authentication + MFA
 
 ### Authentication
 
@@ -377,7 +413,7 @@ OIDC SSO flow piggybacks on the IdP's MFA — Portal accepts the OIDC token's `a
 
 ---
 
-## 10. Conversion pipeline
+## 11. Conversion pipeline
 
 ### Stage 1 — Document parsing
 
@@ -463,7 +499,7 @@ Validation does NOT mean "produces correct results" — only that the Rego is sy
 
 ---
 
-## 11. Review workflow
+## 12. Review workflow
 
 ```
 [draft] ─┬→ [in_review] ─┬→ [published] ─→ [archived]
@@ -480,7 +516,7 @@ Account Owner + Editor can move to published. Auditing of who-approved-what live
 
 ---
 
-## 12. Bundle assembly (Portal-side)
+## 13. Bundle assembly (Portal-side)
 
 Triggers:
 1. A customer policy publishes (their bundle rebuilds)
@@ -514,7 +550,7 @@ The bridge pulls the bundle via `GET /bundles/current`, verifies the signature w
 
 ---
 
-## 13. Drift detection
+## 14. Drift detection
 
 When `rego_policy_libraries` updates (a new SHA is published for a framework):
 
@@ -528,7 +564,7 @@ When `rego_policy_libraries` updates (a new SHA is published for a framework):
 
 ---
 
-## 14. Versioning model
+## 15. Versioning model
 
 | Object | Versioning scheme |
 |---|---|
@@ -547,7 +583,7 @@ This is the chain of custody an auditor will want when assessing "are you runnin
 
 ---
 
-## 15. Frontend pages (React)
+## 16. Frontend pages (React)
 
 | Route | Purpose |
 |---|---|
@@ -567,7 +603,7 @@ Component library: continues the existing `frontend/src/pages/` pattern (Vite + 
 
 ---
 
-## 16. Open questions (things to tweak as we go)
+## 17. Open questions (things to tweak as we go)
 
 These are deferred to "tweak as we learn":
 
@@ -586,7 +622,7 @@ These are deferred to "tweak as we learn":
 
 ---
 
-## 17. Phased implementation plan
+## 18. Phased implementation plan
 
 ### Phase 1 — foundations (sprints 1-2)
 
@@ -628,7 +664,7 @@ This is **8 sprints / ~16 weeks** for the MVP. Phase 1 is independent and parall
 
 ---
 
-## 18. References
+## 19. References
 
 ### Code (to be created)
 
@@ -665,7 +701,7 @@ This is **8 sprints / ~16 weeks** for the MVP. Phase 1 is independent and parall
 
 ---
 
-## 19. The compliance loop — beyond MVP
+## 20. The compliance loop — beyond MVP
 
 The MVP (Phases 1-4) ships **policy → Rego → bundle delivery**. The
 strategic value, and what justifies the buyer's investment, is the
@@ -788,7 +824,7 @@ New data:
 
 ---
 
-## 20. Audit-ready policy reports
+## 21. Audit-ready policy reports
 
 This is the deliverable an auditor wants. Phase 7.
 
@@ -845,7 +881,7 @@ That's an end-to-end story no Excel-and-screenshot audit prep can match.
 
 ---
 
-## 21. Updated phased implementation plan
+## 22. Updated phased implementation plan
 
 ### Phase 1 — foundations (sprints 1-2)
 (unchanged from §17 — tenant users, RBAC, TOTP MFA, per-tenant git, object store, audit log)
@@ -883,3 +919,220 @@ That's an end-to-end story no Excel-and-screenshot audit prep can match.
 ### Total
 
 **14 sprints / ~28 weeks** to ship the full loop. Phases 1-4 (~16 weeks) deliver an MVP that proves the architecture and onboards first customers; Phases 5-7 build the strategic moat.
+
+---
+
+## 23. Tier 1 governance additions — extensible patterns
+
+The MVP adds these governance surfaces as **first-class extensible
+patterns**, not bolt-ons, per the §2 principle. Each one is designed
+so Tier 2 and Tier 3 expansions are pure additions.
+
+### 23.1 Control ownership
+
+Every policy has a designated `control_owner_user_id`. The owner is:
+
+- Surfaced on every policy view + every audit report row
+- The default approver for exception requests against this policy
+- The recipient of periodic-review reminders
+- The recipient of drift-detection alerts on the policy's overlays
+- Reassignable by an Account Owner (with audit-logged transfer)
+
+Why extensible: ownership is per-policy today; per-control (sub-policy)
+or per-target-system ownership is additive — same FK, new scope.
+
+### 23.2 Periodic review workflow
+
+Daily cron job (`policy_review_cron`) checks every published policy
+where `next_review_due_at < now() + 30 days`:
+
+| State | Action |
+|---|---|
+| 30+ days before due | Email + Portal banner to `control_owner_user_id` |
+| 7 days before due | Same plus copy to Account Owner |
+| Overdue | Banner on dashboard; new bundles flag the policy as `review_overdue: true` |
+| Owner clicks "I reviewed, no change needed" | `last_reviewed_at` stamped; `next_review_due_at` advances; audit log captures attestation |
+| Owner publishes a new version | `last_reviewed_at` set to publish time |
+
+Why extensible: this is a generic "scheduled work item" surface. Adding
+similar cadences to other entities (vendor reviews, access reviews,
+training re-attestation) reuses the same cron + notification plumbing.
+
+### 23.3 Exception management — `policy_events` (polymorphic base)
+
+Instead of a one-off `policy_exceptions` table, introduce a
+**polymorphic `policy_events`** table that holds any non-normal
+state a policy enters:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `tenant_id` | uuid | FK |
+| `customer_policy_id` | uuid | FK |
+| `event_type` | enum | `exception`, `incident`, `deviation`, `waiver`, `compensating_control_invocation` |
+| `scope_target_system` | text | nullable |
+| `scope_host_pattern` | text | nullable — narrowing scope (e.g., "all hosts in `prod-eu`") |
+| `justification` | text | Customer's written rationale |
+| `requested_by` | uuid | FK → tenant_users |
+| `approved_by` | uuid | FK → tenant_users, nullable until approved |
+| `approved_at` | timestamptz | |
+| `expires_at` | timestamptz | nullable — exceptions usually expire and force re-review |
+| `status` | enum | `requested`, `approved`, `rejected`, `expired`, `revoked` |
+| `linked_compensating_control_id` | uuid | nullable — points to another policy that fills the gap |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+MVP exposes `event_type = 'exception'` only. Tier 2 (incident
+management) and Tier 3 (waivers, compensating-control linkage) add
+behaviors by enabling more event types — no schema migration.
+
+### 23.4 Risk linkage — `risk_links` (polymorphic many-to-many)
+
+Customers express "this policy mitigates risk R" via a polymorphic
+linker:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `tenant_id` | uuid | FK |
+| `subject_type` | enum | `customer_policy`, `policy_event`, `customer_golden_image`, future types |
+| `subject_id` | uuid | FK by-type (no PG-level FK constraint; enforced in API) |
+| `risk_id` | uuid | FK → `customer_risks` |
+| `link_type` | enum | `mitigates`, `addresses`, `monitors`, `compensates_for` |
+| `created_by` | uuid | FK → tenant_users |
+| `created_at` | timestamptz | |
+
+Plus a lightweight `customer_risks` table for risks the customer
+records in the Portal:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `tenant_id` | uuid | FK |
+| `name` | text | |
+| `description` | text | |
+| `severity` | enum | `low`, `medium`, `high`, `critical` |
+| `owner_user_id` | uuid | FK → tenant_users |
+| `status` | enum | `active`, `accepted`, `mitigated`, `closed` |
+| `source` | enum | `customer_defined`, `imported_from_grc` |
+| `external_ref` | text | nullable — for risks imported from Drata/Vanta/OneTrust |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+Why polymorphic: today the link is `policy → risk`; tomorrow it's
+also `incident → risk`, `vendor → risk`, `asset class → risk`. Same
+table, new `subject_type` values.
+
+**External GRC integration**: `customer_risks.source = 'imported_from_grc'`
++ `external_ref` lets Tier 3 import customers' existing risk registers
+from Drata, Vanta, OneTrust, ServiceNow GRC, etc. We become the
+policy + Rego + assessment layer of their existing GRC investment,
+not a competitor to it.
+
+---
+
+## 24. Audit coverage analysis
+
+The buyer-facing question: **"Is the Portal audit-ready for
+framework X?"** This section answers it for the three frameworks
+most commonly required of SaaS customers + their SaaS suppliers.
+
+Legend:
+- ✅ **Covered** by current or planned Portal features
+- 🟡 **Partial** — Portal addresses some aspects; customer/external tool fills rest
+- ⏳ **Planned** in a Phase or Tier (referenced)
+- ➡️ **Integrate, don't build** — explicit decision per §2 to defer to a customer's GRC tool
+- ❌ **Not addressed**
+
+### 24.1 SOC 2 Trust Services Criteria
+
+| Criterion | Topic | Portal coverage | Where |
+|---|---|---|---|
+| CC1 | Control Environment | ➡️ Integrate (HR / GRC) | Customer's HRIS + GRC tool. Portal exposes its own controls via trust page. |
+| CC2 | Communication & Information | 🟡 Partial | Policy publication + audit log + customer notification on changes (§12) |
+| CC3 | Risk Assessment | ✅ via Tier 1 risk linkage + `customer_risks` (§23.4) | Customer-defined risks linked to policies; GRC-imported risks supported |
+| CC4 | Monitoring Activities | ✅ Live AAC assessment + drift detection (§14) + audit log | Assessment results + control-effectiveness over time |
+| CC5 | Control Activities | ✅ The core Portal scope | Policy → Rego → assessment |
+| CC6 | Logical & Physical Access | 🟡 Logical (RBAC + MFA §9/§10) ✅; Physical ➡️ Integrate (facility security is customer's) |
+| CC7 | System Operations | ✅ AAC live assessment + Portal observability (`portal_operations_runbook.md`) |
+| CC8 | Change Management | ✅ Policy version history + review workflow (§12) + Portal release pipeline (operations runbook §12) |
+| CC9 | Risk Mitigation | ✅ Tier 1 risk linkage; Phase 5 remediation playbooks (§19.1) |
+| A (Availability) | Service SLA | ✅ Portal SLOs (`portal_reliability_slo.md`); customer's own systems via AAC |
+| C (Confidentiality) | Data confidentiality | 🟡 Portal side — encryption, access control; Customer side — assessed by AAC against their policy |
+| PI (Processing Integrity) | Data accuracy | ➡️ Integrate (application-layer concern) |
+| P (Privacy) | PII handling | 🟡 Portal side — tenant data lifecycle (§6.4 in capabilities brief Piece 19); Customer side — assessed against their privacy policy |
+
+**SOC 2 verdict:** ✅ Substantially ready once Phase 5 + Tier 1 ship. Two remaining concerns: physical security (out of scope for any SaaS) and processing integrity (application-specific). Both are reasonable "not us" answers.
+
+### 24.2 ISO 27001:2022 Annex A controls
+
+ISO 27001:2022 has 93 controls in four themes. Summarized:
+
+| Theme | Controls | Portal coverage |
+|---|---|---|
+| **A.5 Organizational controls** (37 controls) | Policies for IS, roles, threat intel, learning, asset mgmt, supplier mgmt, incidents | ✅ Policies + roles + assessment (core scope) · 🟡 Asset mgmt (`tenant_inventory_catalog`) · ⏳ Incident mgmt (Tier 2) · ➡️ Supplier mgmt (TPRM tool) |
+| **A.6 People controls** (8 controls) | Screening, terms, awareness, disciplinary, NDAs | ➡️ Integrate (HR domain) |
+| **A.7 Physical controls** (14 controls) | Perimeter, entry, monitoring, equipment, cabling | ➡️ Integrate (facility / IT ops) |
+| **A.8 Technological controls** (34 controls) | Endpoint, access control, crypto, configuration, logging, monitoring, vulnerability mgmt, capacity, transfer | ✅ Live assessment via AAC; Path A/B policy customization |
+
+**ISO 27001 verdict:** ✅ Strong on technological + organizational (the two themes a SaaS-and-its-customer typically need help with). People + Physical are correctly out of scope — no buyer expects their compliance SaaS to do HR background checks or run badge readers.
+
+### 24.3 NIST SP 800-53 Rev 5 control families
+
+20 control families; selected coverage:
+
+| Family | Topic | Portal coverage |
+|---|---|---|
+| AC | Access Control | ✅ RBAC + MFA + audit log |
+| AU | Audit & Accountability | ✅ `policy_audit_log`; bundle history; Phase 7 reports |
+| AT | Awareness & Training | ⏳ Tier 2 (training records) |
+| CA | Assessment, Authorization & Monitoring | ✅ Live assessment via AAC |
+| CM | Configuration Management | ✅ Path A/B policy customization; bundle versioning |
+| CP | Contingency Planning | ➡️ Integrate (customer's BCP tool) |
+| IA | Identification & Authentication | ✅ OIDC + MFA |
+| IR | Incident Response | ⏳ Tier 2 (incident register); ➡️ Integrate for full IR platform |
+| MA | Maintenance | ✅ via AAC (system maintenance assessment) |
+| MP | Media Protection | ➡️ Integrate (customer's data lifecycle) |
+| PS | Personnel Security | ➡️ Integrate (HR) |
+| PE | Physical & Environmental | ➡️ Integrate (facility) |
+| PL | Planning | ✅ Policy + risk linkage |
+| PM | Program Management | 🟡 via §23 governance fields |
+| RA | Risk Assessment | ✅ Tier 1 risk linkage |
+| SA | System & Services Acquisition | ➡️ Integrate (procurement) |
+| SC | System & Communications Protection | ✅ via AAC assessment + Portal-side controls |
+| SI | System & Information Integrity | ✅ via AAC + drift detection |
+| SR | Supply Chain Risk Management | ⏳ Phase 6 (golden image attestations); ➡️ Integrate for vendor TPRM |
+| PT | PII Processing & Transparency | 🟡 Portal side; ➡️ Integrate for customer's privacy stack |
+
+**NIST 800-53 verdict:** ✅ Strong technical / operational families; correctly defers personnel / physical / procurement families to the customer's broader stack.
+
+### 24.4 Cross-framework readiness summary
+
+| Framework | Portal MVP (Phases 1-4) | Phase 5-7 + Tier 1 added | Full Tier 2 added |
+|---|---|---|---|
+| SOC 2 Type II | 65% ready | 90% ready | 95% ready (Tier 2 adds training + incident register) |
+| ISO 27001:2022 | 60% ready | 85% ready | 90% ready |
+| NIST 800-53 Rev 5 | 55% ready | 80% ready | 88% ready |
+| PCI-DSS v4.0 | 50% ready (CC's + technical controls strong; merchant-specific gaps remain) | 75% ready | 80% ready |
+| HIPAA Security Rule | 60% ready | 85% ready | 88% ready |
+| FedRAMP Moderate | 45% ready (Portal SOC 2 needed first; FedRAMP-specific controls + 3PAO process out of scope) | 70% ready | 75% ready |
+
+The 5-10% gap that remains for SOC 2 / ISO is by design — physical
+security, HR processes, facility operations, and customer-specific
+application integrity will never be answered by the Portal. We tell
+that story honestly to buyers.
+
+### 24.5 What we will not build — and why that's OK
+
+| Capability | Why we defer to a partner |
+|---|---|
+| Full TPRM (vendor risk management) | Drata, Vanta, OneTrust, ServiceNow GRC are all market leaders. Integrate via API to ingest the customer's vendor list as risks (§23.4). |
+| Full BCP/DRP testing platform | Specialized vendors (Castellan, Fusion Risk Management). Portal provides the policy + assessment evidence that BCP plans exist and are tested; the testing itself happens elsewhere. |
+| Identity & access review tooling | Saviynt, SailPoint, Okta IGA. Portal consumes their access-review evidence via API into the audit report. |
+| HR / personnel security | The customer's HRIS (Workday, BambooHR). Out of scope. |
+| Privacy / GDPR data-subject-request platform | OneTrust, Securiti.ai, BigID. Portal provides the privacy-policy assessment evidence; DSAR fulfillment happens elsewhere. |
+| Physical security / facility controls | Out of scope for any SaaS. |
+
+The discipline: **build what comes for free with the IR + AAC; integrate everything else.**
+
+---
