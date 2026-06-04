@@ -76,6 +76,28 @@ class RegoGenerationResponse(BaseModel):
     targets: list[GeneratedTargetSummary]
 
 
+class RepublishRequest(BaseModel):
+    """Body for POST /portal/v1/me/policies/{id}/republish.
+
+    new_version_semver is optional — when omitted, the server bumps
+    the patch component of the prior version. Customers who want a
+    minor or major bump pass it explicitly. effective_date defaults
+    to today on the new draft."""
+    new_version_semver: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Override the auto-bumped patch version (e.g. 'v2.0.0').",
+    )
+
+
+class RepublishResponse(BaseModel):
+    new_customer_policy_id: UUID
+    new_version_semver: str
+    targets_copied: int
+    parent_policy_id: UUID
+    parent_version_semver: str
+
+
 class IRExtractionResponse(BaseModel):
     """Returned by POST /portal/v1/me/policies/{id}/extract-ir.
 
