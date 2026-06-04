@@ -25,6 +25,34 @@ from .portal_db import get_portal_pool
 
 REQUIRED_SCOPE = "cve_feed"
 
+# Tokens used by the AAC bridge to pull customer policy bundles.
+# Granted via the operator-admin "AAC - Issue Bundle Pull Token" flow.
+BUNDLE_PULL_SCOPE = "policy_bundle_pull"
+
+
+def require_tenant_with_scope(scope: str):
+    """Dependency factory — produces a `require_tenant`-shaped dependency
+    that asserts the token grants `scope` rather than the hardcoded
+    `cve_feed` default. Routers consume it via `Depends(require_tenant_with_scope("policy_bundle_pull"))`.
+
+    The MVP build keeps the original `require_tenant` for the CVE feed
+    path (no breaking change to migration 001 callers) and adds this
+    factory so the bundle endpoints declare their scope explicitly.
+    """
+
+    async def _checker(
+        request: Request,
+        tenant_id: str,
+        authorization: Annotated[str | None, Header()] = None,
+        x_token_id: Annotated[str | None, Header(alias="X-Token-Id")] = None,
+        pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)] = None,  # type: ignore[assignment]
+    ) -> dict[str, Any]:
+        return await _resolve(
+            request, tenant_id, authorization, x_token_id, pool, scope
+        )
+
+    return _checker
+
 
 async def _verify_bcrypt(token: str, hashed: str) -> bool:
     # bcrypt.checkpw is CPU-bound but cheap (~50ms); offload to thread to
@@ -43,14 +71,17 @@ async def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-async def require_tenant(
+async def _resolve(
     request: Request,
     tenant_id: str,
-    authorization: Annotated[str | None, Header()] = None,
-    x_token_id: Annotated[str | None, Header(alias="X-Token-Id")] = None,
-    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)] = None,  # type: ignore[assignment]
+    authorization: str | None,
+    x_token_id: str | None,
+    pool: asyncpg.Pool,
+    scope: str,
 ) -> dict[str, Any]:
-    """FastAPI dependency that resolves and returns the tenant + token row."""
+    """Shared body for require_tenant / require_tenant_with_scope.
+    Scope is checked against tenant_tokens.scopes via PostgreSQL ANY().
+    """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
@@ -62,8 +93,6 @@ async def require_tenant(
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid tenant_id")
 
-    # Pull all active cve_feed tokens for this tenant. Usually 1–2; we
-    # iterate them so rotation overlaps work without scheduling pain.
     rows = await pool.fetch(
         """
         SELECT tt.id, tt.token_id, tt.token_secret_hash, tt.scopes,
@@ -75,10 +104,12 @@ async def require_tenant(
            AND $2 = ANY(tt.scopes)
         """,
         tenant_uuid,
-        REQUIRED_SCOPE,
+        scope,
     )
     if not rows:
-        raise HTTPException(status_code=401, detail="no active cve_feed token for tenant")
+        raise HTTPException(
+            status_code=401, detail=f"no active {scope} token for tenant"
+        )
 
     matched: asyncpg.Record | None = None
     for r in rows:
@@ -116,3 +147,19 @@ async def require_tenant(
         "token_pk": matched["id"],
         "scopes": list(matched["scopes"] or []),
     }
+
+
+async def require_tenant(
+    request: Request,
+    tenant_id: str,
+    authorization: Annotated[str | None, Header()] = None,
+    x_token_id: Annotated[str | None, Header(alias="X-Token-Id")] = None,
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)] = None,  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """FastAPI dependency for the CVE feed pull path (scope=cve_feed).
+
+    Preserved for migration 001 / CVE intelligence callers. New code
+    that needs a different scope (e.g. policy_bundle_pull) should use
+    require_tenant_with_scope instead.
+    """
+    return await _resolve(request, tenant_id, authorization, x_token_id, pool, REQUIRED_SCOPE)

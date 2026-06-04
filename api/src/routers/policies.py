@@ -543,3 +543,101 @@ async def generate_policy_rego(
         targets_rejected=sum(1 for s in summaries if s.review_status == "rejected"),
         targets=summaries,
     )
+
+
+@router.post(
+    "/{policy_id}/publish",
+    response_model=None,
+    status_code=200,
+)
+async def publish_policy(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+):
+    """Flip a policy from draft/in_review to published.
+
+    Requires:
+      - status != 'published' (re-publish goes through the republish
+        flow, which is a new customer_policies row in PR 9b)
+      - at least one customer_policy_targets row with
+        review_status='approved'
+
+    The trigger from migration 012 enforces post-publish immutability:
+    in-place edits raise CHECK violation. A subsequent build endpoint
+    folds this policy's approved targets into the next bundle.
+    """
+    from ..models.policy_bundle import PublishResponse
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT id, status, version_semver
+                  FROM customer_policies
+                 WHERE id = $1 AND tenant_id = $2
+                 FOR UPDATE
+                """,
+                policy_id,
+                tenant_user["tenant_id"],
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="policy not found")
+            if row["status"] == "published":
+                raise HTTPException(
+                    status_code=409,
+                    detail="policy is already published; create a new version "
+                    "to republish",
+                )
+
+            approved = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM customer_policy_targets
+                 WHERE customer_policy_id = $1
+                   AND review_status = 'approved'
+                """,
+                policy_id,
+            )
+            if approved == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="no approved targets — review at least one target "
+                    "before publishing",
+                )
+
+            updated = await conn.fetchrow(
+                """
+                UPDATE customer_policies
+                   SET status = 'published',
+                       published_at = now(),
+                       published_by = $2
+                 WHERE id = $1
+                RETURNING id, status, published_at, version_semver
+                """,
+                policy_id,
+                tenant_user["tenant_user_id"],
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'published',
+                        jsonb_build_object(
+                            'approved_targets', $4::int,
+                            'version_semver', $5::text))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                policy_id,
+                approved,
+                row["version_semver"],
+            )
+
+    return PublishResponse(
+        customer_policy_id=updated["id"],
+        status=updated["status"],
+        published_at=updated["published_at"],
+        version_semver=updated["version_semver"],
+    )

@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     rego_generation_timeout_seconds: int = 60
     rego_llm_repair_attempts: int = 1       # 1 initial + 1 repair = 2 calls max
 
+    # Bundle delivery (PR 9 — publish + signed tarball)
+    bundle_signing_key_path: str = ""       # path to ed25519 PEM (32-byte seed)
+    bundle_signing_key_id: str = "portal-mvp-2026-06"  # rotated in operator playbook
+    opa_build_timeout_seconds: int = 60
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
