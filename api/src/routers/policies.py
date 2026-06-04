@@ -63,6 +63,13 @@ from ..models.customer_policy import (
     UploadAccepted,
 )
 from ..models.standard_library import ForkRequest, ForkResponse, UpstreamDiff
+from ..models.target_review import (
+    TargetDetail,
+    TargetEditRequest,
+    TargetReviewAction,
+    TargetSummary,
+)
+from ..core.rego_validator import opa_check
 
 
 router = APIRouter(prefix="/portal/v1/me/policies", tags=["portal:policies"])
@@ -875,3 +882,354 @@ async def get_upstream_diff(
         ),
         unified_diff="".join(diff_lines),
     )
+
+
+# ── Target review workflow ────────────────────────────────────────────
+
+
+async def _fetch_policy_for_target_action(
+    pool: asyncpg.Pool,
+    tenant_id: UUID,
+    policy_id: UUID,
+) -> dict[str, Any]:
+    """Look up the parent policy + assert tenant ownership + status.
+
+    Any mutating target action (PATCH / approve / reject) requires the
+    parent customer_policy to NOT be published. Once a policy is
+    published, its targets are frozen — editing them would mutate
+    what shipped in the bundle. Republish via a new customer_policies
+    row is the only path forward.
+    """
+    row = await pool.fetchrow(
+        "SELECT id, status FROM customer_policies WHERE id = $1 AND tenant_id = $2",
+        policy_id,
+        tenant_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    if row["status"] == "published":
+        raise HTTPException(
+            status_code=409,
+            detail="parent policy is published; republish via a new "
+            "version to edit targets",
+        )
+    return dict(row)
+
+
+@router.get(
+    "/{policy_id}/targets",
+    response_model=list[TargetSummary],
+)
+async def list_policy_targets(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+) -> list[dict]:
+    # Verify the policy belongs to this tenant; raises 404 if not.
+    policy = await pool.fetchrow(
+        "SELECT id FROM customer_policies WHERE id = $1 AND tenant_id = $2",
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if policy is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+
+    rows = await pool.fetch(
+        """
+        SELECT id, customer_policy_id, target_system, target_subtype,
+               generation_method, confidence_score, review_status,
+               rego_content_sha256, published_in_bundle_sha, created_at
+          FROM customer_policy_targets
+         WHERE customer_policy_id = $1
+         ORDER BY target_system, target_subtype NULLS FIRST, created_at DESC
+        """,
+        policy_id,
+    )
+    return [dict(r) for r in rows]
+
+
+@router.get(
+    "/{policy_id}/targets/{target_id}",
+    response_model=TargetDetail,
+)
+async def get_policy_target(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+    target_id: UUID,
+) -> dict:
+    row = await pool.fetchrow(
+        """
+        SELECT cpt.id, cpt.customer_policy_id, cpt.target_system,
+               cpt.target_subtype, cpt.generation_method,
+               cpt.confidence_score, cpt.review_status,
+               cpt.rego_content_sha256, cpt.published_in_bundle_sha,
+               cpt.created_at, cpt.rego_storage_key
+          FROM customer_policy_targets cpt
+          JOIN customer_policies cp ON cp.id = cpt.customer_policy_id
+         WHERE cpt.id = $1
+           AND cp.id = $2
+           AND cp.tenant_id = $3
+        """,
+        target_id,
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="target not found")
+
+    key = row["rego_storage_key"]
+    if not key or not key.startswith("pgrego:"):
+        raise HTTPException(status_code=500, detail="rego artifact key missing or unsupported")
+    artifact_id = key.split(":", 1)[1]
+    artifact = await pool.fetchrow(
+        "SELECT extracted_text FROM policy_uploads WHERE id = $1::uuid",
+        artifact_id,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=500, detail="rego artifact row missing")
+
+    return {**dict(row), "rego_text": artifact["extracted_text"]}
+
+
+@router.patch(
+    "/{policy_id}/targets/{target_id}",
+    response_model=TargetDetail,
+)
+async def edit_policy_target(
+    body: TargetEditRequest,
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+    target_id: UUID,
+) -> dict:
+    """Replace a target's Rego text. Re-validates via `opa check`.
+
+    A successful edit resets review_status to 'pending' regardless of
+    what it was — the customer must re-review the modified Rego
+    before it can ship in a bundle. published_in_bundle_sha is left
+    intact for the audit trail (it points at the historical bundle
+    the prior version shipped in, if any).
+
+    A failed `opa check` 422s with stderr in the response so the UI
+    can show the customer what to fix. No DB write happens on failure.
+    """
+    await _fetch_policy_for_target_action(
+        pool, tenant_user["tenant_id"], policy_id
+    )
+
+    existing = await pool.fetchrow(
+        """
+        SELECT cpt.id, cpt.target_system, cpt.target_subtype,
+               cpt.review_status, cpt.rego_content_sha256
+          FROM customer_policy_targets cpt
+          JOIN customer_policies cp ON cp.id = cpt.customer_policy_id
+         WHERE cpt.id = $1 AND cp.id = $2 AND cp.tenant_id = $3
+        """,
+        target_id,
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if existing is None:
+        raise HTTPException(status_code=404, detail="target not found")
+
+    try:
+        check = await opa_check(rego_text=body.rego_text)
+    except (OpaBinaryMissing, OpaVersionTooOld) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not check.ok:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "opa_check failed", "stderr": check.stderr[:2000]},
+        )
+
+    new_sha = hashlib.sha256(body.rego_text.encode("utf-8")).hexdigest()
+    bundle_store = get_bundle_store()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            storage_key, _artifact_id = await bundle_store.put_rego(
+                tenant_id=tenant_user["tenant_id"],
+                uploaded_by_user_id=tenant_user["tenant_user_id"],
+                filename=f"edit__{existing['target_system']}__{new_sha[:8]}.rego",
+                rego_text=body.rego_text,
+                conn=conn,
+            )
+
+            updated = await conn.fetchrow(
+                """
+                UPDATE customer_policy_targets
+                   SET rego_storage_key = $1,
+                       rego_content_sha256 = $2,
+                       review_status = 'pending'
+                 WHERE id = $3
+                RETURNING id, customer_policy_id, target_system,
+                          target_subtype, generation_method,
+                          confidence_score, review_status,
+                          rego_content_sha256, published_in_bundle_sha,
+                          created_at, rego_storage_key
+                """,
+                storage_key,
+                new_sha,
+                target_id,
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'target_edited',
+                        jsonb_build_object(
+                            'target_id', $4::text,
+                            'prior_review_status', $5::text,
+                            'prior_sha256', $6::text,
+                            'new_sha256', $7::text))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                policy_id,
+                str(target_id),
+                existing["review_status"],
+                existing["rego_content_sha256"],
+                new_sha,
+            )
+
+    return {**dict(updated), "rego_text": body.rego_text}
+
+
+@router.post(
+    "/{policy_id}/targets/{target_id}/approve",
+    response_model=TargetSummary,
+)
+async def approve_policy_target(
+    body: TargetReviewAction,
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+    target_id: UUID,
+) -> dict:
+    """Mark a target as approved — eligible to ship in the next bundle.
+
+    Reject → approve directly is permitted: the customer might have
+    rejected, edited (which resets to pending), then approved. We
+    don't gate approve on prior status to keep the workflow flexible.
+    """
+    await _fetch_policy_for_target_action(
+        pool, tenant_user["tenant_id"], policy_id
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE customer_policy_targets cpt
+                   SET review_status = 'approved'
+                  FROM customer_policies cp
+                 WHERE cpt.id = $1
+                   AND cp.id = cpt.customer_policy_id
+                   AND cp.id = $2
+                   AND cp.tenant_id = $3
+                RETURNING cpt.id, cpt.customer_policy_id, cpt.target_system,
+                          cpt.target_subtype, cpt.generation_method,
+                          cpt.confidence_score, cpt.review_status,
+                          cpt.rego_content_sha256,
+                          cpt.published_in_bundle_sha, cpt.created_at
+                """,
+                target_id,
+                policy_id,
+                tenant_user["tenant_id"],
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="target not found")
+
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'target_approved',
+                        jsonb_build_object(
+                            'target_id', $4::text,
+                            'sha256', $5::text,
+                            'reason', $6::text))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                policy_id,
+                str(target_id),
+                row["rego_content_sha256"],
+                body.reason,
+            )
+
+    return dict(row)
+
+
+@router.post(
+    "/{policy_id}/targets/{target_id}/reject",
+    response_model=TargetSummary,
+)
+async def reject_policy_target(
+    body: TargetReviewAction,
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+    target_id: UUID,
+) -> dict:
+    """Mark a target rejected. Reason is required — the audit log
+    needs to record WHY a generated Rego didn't pass review, so a
+    future reviewer / auditor can understand the decision."""
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="rejection reason is required",
+        )
+
+    await _fetch_policy_for_target_action(
+        pool, tenant_user["tenant_id"], policy_id
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE customer_policy_targets cpt
+                   SET review_status = 'rejected'
+                  FROM customer_policies cp
+                 WHERE cpt.id = $1
+                   AND cp.id = cpt.customer_policy_id
+                   AND cp.id = $2
+                   AND cp.tenant_id = $3
+                RETURNING cpt.id, cpt.customer_policy_id, cpt.target_system,
+                          cpt.target_subtype, cpt.generation_method,
+                          cpt.confidence_score, cpt.review_status,
+                          cpt.rego_content_sha256,
+                          cpt.published_in_bundle_sha, cpt.created_at
+                """,
+                target_id,
+                policy_id,
+                tenant_user["tenant_id"],
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="target not found")
+
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'target_rejected',
+                        jsonb_build_object(
+                            'target_id', $4::text,
+                            'sha256', $5::text,
+                            'reason', $6::text))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                policy_id,
+                str(target_id),
+                row["rego_content_sha256"],
+                body.reason,
+            )
+
+    return dict(row)
