@@ -16,6 +16,7 @@ from src.routers import (
     me_mfa,
     policies,
     portal_feed,
+    standard_library,
     tenant_users,
     tenants,
 )
@@ -62,6 +63,7 @@ app.include_router(policies.router, prefix="/api")
 app.include_router(bundles.user_router, prefix="/api")
 app.include_router(bundles.bridge_router, prefix="/api")
 app.include_router(bundles.public_router, prefix="/api")
+app.include_router(standard_library.router, prefix="/api")
 
 
 @app.get("/health")

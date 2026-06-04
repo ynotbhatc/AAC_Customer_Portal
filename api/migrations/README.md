@@ -34,6 +34,8 @@ PGPASSWORD=change-me-portal psql \
 12. `011_target_mappings_batch_2.sql` — adds 8 more target_mappings rows: `session_timeout × {linux, windows, kubernetes, network_device}` + `audit_log_retention × {linux, windows, kubernetes, network_device}`. All 8 templates render + pass `opa check --v1-compatible` locally; `session_timeout/linux` round-trip-validated against the live RHPDS opa-security cluster.
 13. `012_publish_and_bundles.sql` — closes the Path A loop: adds `customer_policies.published_at` + `.published_by`, an immutability trigger that rejects in-place edits of published policies, and a new `policy_bundles` table (bytea bundle bytes + ed25519-signed envelope + jsonb manifest + history). Backs `POST /api/portal/v1/me/policies/{id}/publish`, `POST /api/portal/v1/me/bundles/build`, and the bridge-facing `GET /api/portal/v1/tenants/{tid}/bundles/{current,sha}` endpoints with scope `policy_bundle_pull`.
 
+PR 10 adds NO new migration — Path B reuses `customer_policies` (with `policy_source='forked_overlay'`, `parent_standard_ref`, `parent_standard_version` from migration 006) and `customer_policy_targets`.
+
 ⚠ 004 adds a `token_secret_plaintext` column on `tenant_tokens` so the
 portal can authenticate outbound calls to each tenant's AAC bridge. For
 v1 it's stored plaintext; production deployments must wrap with Fernet

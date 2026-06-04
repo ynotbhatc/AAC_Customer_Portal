@@ -5,6 +5,15 @@ RUN curl -sSL -o /usr/local/bin/opa \
         https://openpolicyagent.org/downloads/v1.8.0/opa_linux_amd64_static && \
     chmod +x /usr/local/bin/opa && \
     /usr/local/bin/opa version
+
+# Snapshot of the operator's Rego policy library (Path B — fork-and-tweak).
+# Pin a specific tag in production; depth=1 keeps the image small.
+# Build-time tag override:  podman build --build-arg STANDARD_LIBRARY_REF=v2.1.0 .
+ARG STANDARD_LIBRARY_REF=main
+RUN git clone --depth 1 --branch ${STANDARD_LIBRARY_REF} \
+        https://github.com/ynotbhatc/rego_policy_libraries.git \
+        /standard-library && \
+    cd /standard-library && git rev-parse --short HEAD > /standard-library.version
 USER 1001
 
 WORKDIR /app
