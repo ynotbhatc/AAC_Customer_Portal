@@ -330,4 +330,87 @@ export const portalSuppressCve = (
     .post(`/portal/v1/tenants/${tenantId}/cves/${cveId}/suppress`, { reason })
     .then((r) => r.data);
 
+// ── tenant-USER client — bearer = session_token (portal login) ───────
+// Separate axios instance so login/logout/me/policy endpoints inherit
+// the bearer through one interceptor without polluting the M2M
+// tenantApi above.
+const userApi: AxiosInstance = axios.create({ baseURL: BASE });
+
+userApi.interceptors.request.use((cfg) => {
+  const s = getUserSession();
+  if (s) {
+    cfg.headers = cfg.headers ?? {};
+    (cfg.headers as Record<string, string>)["Authorization"] =
+      `Bearer ${s.sessionToken}`;
+  }
+  return cfg;
+});
+
+// Auto-redirect on session expiry / revocation. Components that want
+// to handle 401 themselves can wrap their call in try/catch — the
+// global handler runs first so the page transition wins by default.
+userApi.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err?.response?.status === 401) {
+      clearUserSession();
+      if (!window.location.pathname.startsWith("/portal/login")) {
+        window.location.href = "/portal/login";
+      }
+    }
+    return Promise.reject(err);
+  }
+);
+
+import {
+  clearUserSession,
+  getUserSession,
+  setUserSession,
+} from "./auth";
+import type {
+  LoginRequest,
+  MeResponse,
+  PasswordResetConfirm,
+  SessionCreated,
+} from "../types/user";
+
+export const userLogin = async (body: LoginRequest): Promise<SessionCreated> => {
+  const r = await userApi.post<SessionCreated>("/portal/v1/auth/login", body);
+  setUserSession({
+    sessionToken: r.data.session_token,
+    tenantId: body.tenant_id,
+    email: body.email,
+    expiresAt: r.data.expires_at,
+    mfaRequired: r.data.mfa_required,
+    mfaVerified: r.data.mfa_verified,
+  });
+  return r.data;
+};
+
+export const userLogout = async (): Promise<void> => {
+  try {
+    await userApi.post("/portal/v1/me/logout");
+  } finally {
+    clearUserSession();
+  }
+};
+
+export const userLogoutAll = async (): Promise<void> => {
+  try {
+    await userApi.post("/portal/v1/me/logout-all");
+  } finally {
+    clearUserSession();
+  }
+};
+
+export const userMe = (): Promise<MeResponse> =>
+  userApi.get<MeResponse>("/portal/v1/me").then((r) => r.data);
+
+export const userPasswordResetConfirm = (
+  body: PasswordResetConfirm
+): Promise<void> =>
+  userApi
+    .post("/portal/v1/auth/password-reset/confirm", body)
+    .then(() => undefined);
+
 export default api;

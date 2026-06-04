@@ -10,7 +10,10 @@ import CvesPage from "./pages/CvesPage";
 import TaxonomyPage from "./pages/TaxonomyPage";
 import MyProductsPage from "./pages/MyProductsPage";
 import TenantLoginPage from "./pages/TenantLoginPage";
-import { getAdminToken } from "./lib/auth";
+import PortalLoginPage from "./pages/PortalLoginPage";
+import PortalResetPasswordPage from "./pages/PortalResetPasswordPage";
+import PortalHomePage from "./pages/PortalHomePage";
+import { getAdminToken, getUserSession } from "./lib/auth";
 
 const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
   const [authed, setAuthed] = useState<boolean>(Boolean(getAdminToken()));
@@ -25,12 +28,38 @@ const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+const RequirePortalUser = ({ children }: { children: React.ReactNode }) => {
+  const [authed, setAuthed] = useState<boolean>(Boolean(getUserSession()));
+  useEffect(() => {
+    const onStorage = () => setAuthed(Boolean(getUserSession()));
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  if (!authed) return <Navigate to="/portal/login" replace />;
+  return <>{children}</>;
+};
+
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/my-products/login" element={<TenantLoginPage />} />
       <Route path="/my-products" element={<MyProductsPage />} />
+
+      {/* Policy ingestion portal — tenant_user session auth (PR 15+) */}
+      <Route path="/portal/login" element={<PortalLoginPage />} />
+      <Route
+        path="/portal/reset-password"
+        element={<PortalResetPasswordPage />}
+      />
+      <Route
+        path="/portal/me"
+        element={
+          <RequirePortalUser>
+            <PortalHomePage />
+          </RequirePortalUser>
+        }
+      />
 
       <Route
         path="/"

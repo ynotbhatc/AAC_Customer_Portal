@@ -37,3 +37,37 @@ export const setTenantCreds = (creds: TenantCreds): void => {
 export const clearTenantCreds = (): void => {
   localStorage.removeItem(TENANT_KEY);
 };
+
+// ── Tenant-user session (Path-A/B portal login, PR 11+) ─────────────
+// Stored separately from the M2M tenant_token credentials so a tenant
+// user can open the policy portal and the CVE feed UI in the same browser
+// session without one auth context wiping the other.
+
+const USER_SESSION_KEY = "aac.userSession";
+
+export interface UserSession {
+  sessionToken: string;        // "{session_id}.{secret}" combined token
+  tenantId: string;            // surfaced for headers / display
+  email: string;
+  expiresAt: string;           // ISO 8601 — UI uses to soft-expire locally
+  mfaRequired: boolean;
+  mfaVerified: boolean;
+}
+
+export const getUserSession = (): UserSession | null => {
+  const raw = localStorage.getItem(USER_SESSION_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as UserSession;
+  } catch {
+    return null;
+  }
+};
+
+export const setUserSession = (s: UserSession): void => {
+  localStorage.setItem(USER_SESSION_KEY, JSON.stringify(s));
+};
+
+export const clearUserSession = (): void => {
+  localStorage.removeItem(USER_SESSION_KEY);
+};
