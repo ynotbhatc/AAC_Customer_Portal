@@ -34,6 +34,7 @@ class MeResponse(BaseModel):
     display_name: str | None = None
     role: Role
     mfa_required: bool
+    mfa_enrolled: bool
     mfa_verified: bool
 
 

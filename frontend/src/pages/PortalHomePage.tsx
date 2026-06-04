@@ -130,9 +130,7 @@ export default function PortalHomePage() {
                   {me.mfa_verified ? (
                     <span className="text-emerald-600">Yes</span>
                   ) : (
-                    <span className="text-amber-600">
-                      Not yet — enroll TOTP to access policy writes
-                    </span>
+                    <span className="text-amber-600">Not yet</span>
                   )}
                 </dd>
               </div>
@@ -141,6 +139,30 @@ export default function PortalHomePage() {
             <p className="text-sm text-slate-500">Loading…</p>
           )}
         </section>
+
+        {me && me.mfa_required && !me.mfa_verified ? (
+          <section className="card p-6 border-l-4 border-amber-500">
+            <h2 className="text-base font-semibold text-slate-900 mb-2">
+              {me.mfa_enrolled
+                ? "Verify your second factor"
+                : "Set up two-factor authentication"}
+            </h2>
+            <p className="text-sm text-slate-500 mb-4">
+              {me.mfa_enrolled
+                ? "Your session hasn't completed MFA yet. Enter a TOTP or backup code to unlock policy writes (upload, publish, bundle build)."
+                : "Your account requires MFA before you can publish policies or build bundles. Enrolling takes ~30 seconds."}
+            </p>
+            <button
+              type="button"
+              className="btn-primary text-sm"
+              onClick={() =>
+                navigate(me.mfa_enrolled ? "/portal/mfa/verify" : "/portal/mfa/setup")
+              }
+            >
+              {me.mfa_enrolled ? "Verify now" : "Enroll TOTP"}
+            </button>
+          </section>
+        ) : null}
 
         <section className="card p-6">
           <h2 className="text-base font-semibold text-slate-900 mb-2">

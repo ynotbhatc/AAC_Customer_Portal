@@ -368,10 +368,15 @@ import {
   setUserSession,
 } from "./auth";
 import type {
+  BackupCodesResponse,
   LoginRequest,
   MeResponse,
+  MfaFactorSummary,
   PasswordResetConfirm,
   SessionCreated,
+  TotpConfirmRequest,
+  TotpSetupResponse,
+  TotpVerifyRequest,
 } from "../types/user";
 
 export const userLogin = async (body: LoginRequest): Promise<SessionCreated> => {
@@ -412,5 +417,30 @@ export const userPasswordResetConfirm = (
   userApi
     .post("/portal/v1/auth/password-reset/confirm", body)
     .then(() => undefined);
+
+// ── MFA (PR 16) ──────────────────────────────────────────────────────
+
+export const userMfaFactors = (): Promise<MfaFactorSummary[]> =>
+  userApi.get<MfaFactorSummary[]>("/portal/v1/me/mfa/factors").then((r) => r.data);
+
+export const userMfaTotpSetup = (): Promise<TotpSetupResponse> =>
+  userApi.post<TotpSetupResponse>("/portal/v1/me/mfa/totp/setup").then((r) => r.data);
+
+export const userMfaTotpConfirm = (
+  body: TotpConfirmRequest
+): Promise<BackupCodesResponse> =>
+  userApi.post<BackupCodesResponse>("/portal/v1/me/mfa/totp/confirm", body).then((r) => r.data);
+
+export const userMfaRevokeFactor = (factorId: string): Promise<void> =>
+  userApi.post(`/portal/v1/me/mfa/factors/${factorId}/revoke`).then(() => undefined);
+
+// Login-time second factor — flips session.mfa_verified=true on success.
+// Refreshes the local UserSession so the UI immediately sees the new
+// state without forcing a re-login.
+export const userTotpVerify = async (body: TotpVerifyRequest): Promise<void> => {
+  await userApi.post("/portal/v1/auth/totp/verify", body);
+  const s = getUserSession();
+  if (s) setUserSession({ ...s, mfaVerified: true });
+};
 
 export default api;

@@ -23,6 +23,7 @@ export interface MeResponse {
   display_name: string | null;
   role: Role;
   mfa_required: boolean;
+  mfa_enrolled: boolean;
   mfa_verified: boolean;
 }
 
@@ -33,4 +34,36 @@ export interface PasswordResetConfirm {
 
 export interface LogoutResult {
   revoked: "session" | "all";
+}
+
+// ── MFA (PR 16) ──────────────────────────────────────────────────────
+
+export type FactorType = "totp" | "webauthn" | "backup_codes";
+
+export interface MfaFactorSummary {
+  id: string;
+  factor_type: FactorType;
+  factor_label: string | null;
+  enrolled_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface TotpSetupResponse {
+  factor_id: string;
+  otpauth_uri: string;
+  secret: string;
+}
+
+export interface TotpConfirmRequest {
+  factor_id: string;
+  code: string;
+}
+
+export interface BackupCodesResponse {
+  backup_codes: string[];
+}
+
+export interface TotpVerifyRequest {
+  code: string;
 }

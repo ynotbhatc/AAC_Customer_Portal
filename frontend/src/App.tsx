@@ -13,6 +13,8 @@ import TenantLoginPage from "./pages/TenantLoginPage";
 import PortalLoginPage from "./pages/PortalLoginPage";
 import PortalResetPasswordPage from "./pages/PortalResetPasswordPage";
 import PortalHomePage from "./pages/PortalHomePage";
+import PortalMfaSetupPage from "./pages/PortalMfaSetupPage";
+import PortalMfaVerifyPage from "./pages/PortalMfaVerifyPage";
 import { getAdminToken, getUserSession } from "./lib/auth";
 
 const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
@@ -57,6 +59,22 @@ export default function App() {
         element={
           <RequirePortalUser>
             <PortalHomePage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/mfa/setup"
+        element={
+          <RequirePortalUser>
+            <PortalMfaSetupPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/mfa/verify"
+        element={
+          <RequirePortalUser>
+            <PortalMfaVerifyPage />
           </RequirePortalUser>
         }
       />

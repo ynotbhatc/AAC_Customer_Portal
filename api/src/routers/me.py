@@ -44,6 +44,7 @@ async def me(
         display_name=tenant_user.get("display_name"),
         role=tenant_user["role"],
         mfa_required=tenant_user["mfa_required"],
+        mfa_enrolled=tenant_user["mfa_enrolled"],
         mfa_verified=tenant_user["mfa_verified"],
     )
 

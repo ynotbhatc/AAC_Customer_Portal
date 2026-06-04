@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { userLogin } from "../lib/api";
+import { userLogin, userMfaFactors } from "../lib/api";
 import { extractErr } from "../lib/utils";
 
 /**
@@ -28,11 +28,39 @@ export default function PortalLoginPage() {
     setErr(null);
     setBusy(true);
     try {
-      await userLogin({
+      const session = await userLogin({
         tenant_id: tenantId.trim(),
         email: email.trim(),
         password,
       });
+
+      // MFA-required users: route to the right MFA page.
+      //   - Not yet enrolled with TOTP → /portal/mfa/setup
+      //   - Enrolled but session not yet verified → /portal/mfa/verify
+      // We probe enrollment via /me/mfa/factors instead of /me because
+      // /me's mfa_enrolled is on the user row; factors tells us whether
+      // a confirmed (non-pending_setup) TOTP exists. That's the
+      // distinction that matters for this routing.
+      if (session.mfa_required && !session.mfa_verified) {
+        try {
+          const factors = await userMfaFactors();
+          const hasConfirmedTotp = factors.some(
+            (f) =>
+              f.factor_type === "totp" &&
+              f.factor_label !== "pending_setup" &&
+              f.revoked_at === null
+          );
+          navigate(hasConfirmedTotp ? "/portal/mfa/verify" : "/portal/mfa/setup", {
+            replace: true,
+          });
+          return;
+        } catch {
+          // If we can't fetch factors, fall through to /portal/me; the
+          // home page will show the MFA-not-verified warning and the
+          // user can navigate to /portal/mfa/setup explicitly.
+        }
+      }
+
       navigate("/portal/me", { replace: true });
     } catch (e2) {
       setErr(extractErr(e2));

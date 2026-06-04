@@ -143,7 +143,7 @@ async def _resolve_bearer(
         SELECT s.id AS session_id, s.tenant_user_id, s.session_token_hash,
                s.mfa_verified, s.expires_at, s.revoked_at,
                u.tenant_id, u.email::text AS email, u.role,
-               u.mfa_required, u.disabled_at, u.display_name
+               u.mfa_required, u.mfa_enrolled, u.disabled_at, u.display_name
           FROM tenant_user_sessions s
           JOIN tenant_users u ON u.id = s.tenant_user_id
          WHERE s.id = $1
@@ -189,6 +189,7 @@ async def _resolve_bearer(
         "display_name": row["display_name"],
         "role": row["role"],
         "mfa_required": row["mfa_required"],
+        "mfa_enrolled": row["mfa_enrolled"],
         "mfa_verified": row["mfa_verified"],
     }
 
