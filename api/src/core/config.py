@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     ir_extraction_timeout_seconds: int = 90
     ir_schema_version: str = "v1"
 
+    # Rego generation (Phase 2 — Path A finish)
+    opa_binary_path: str = "opa"            # name or absolute path
+    opa_min_version_major: int = 0
+    opa_min_version_minor: int = 60         # require >= 0.60 (Rego v1 syntax)
+    opa_check_timeout_seconds: int = 15
+    rego_generation_max_tokens: int = 2048
+    rego_generation_timeout_seconds: int = 60
+    rego_llm_repair_attempts: int = 1       # 1 initial + 1 repair = 2 calls max
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

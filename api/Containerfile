@@ -1,5 +1,12 @@
 FROM registry.access.redhat.com/ubi9/python-311:latest
 
+USER 0
+RUN curl -sSL -o /usr/local/bin/opa \
+        https://openpolicyagent.org/downloads/v1.8.0/opa_linux_amd64_static && \
+    chmod +x /usr/local/bin/opa && \
+    /usr/local/bin/opa version
+USER 1001
+
 WORKDIR /app
 
 COPY requirements.txt .

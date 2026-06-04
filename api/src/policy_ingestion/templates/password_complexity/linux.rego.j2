@@ -1,0 +1,72 @@
+# Customer policy — password complexity (Linux)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+# Effective:     {{ effective_date | default('') }}
+#
+# Expects facts shaped as input.pam_pwquality_conf — a dict parsed from
+# /etc/security/pwquality.conf. Tested against Ansible facts gathered by
+# AAC's enhanced_cis_fact_collection.yml.
+
+package customer.{{ tenant_slug }}.password_complexity.linux
+
+import rego.v1
+
+default compliant := false
+
+violations contains msg if {
+{%- if min_length is defined %}
+    actual := to_number(input.pam_pwquality_conf.minlen)
+    actual < {{ min_length }}
+    msg := sprintf("minlen=%d (required >= {{ min_length }})", [actual])
+}
+{%- endif %}
+
+{%- if min_character_classes is defined %}
+
+violations contains msg if {
+    actual_classes := to_number(input.pam_pwquality_conf.minclass)
+    actual_classes < {{ min_character_classes }}
+    msg := sprintf("minclass=%d (required >= {{ min_character_classes }})", [actual_classes])
+}
+{%- endif %}
+
+{%- if require_lowercase %}
+
+violations contains "lcredit not enforced (require_lowercase=true)" if {
+    to_number(input.pam_pwquality_conf.lcredit) >= 0
+}
+{%- endif %}
+
+{%- if require_uppercase %}
+
+violations contains "ucredit not enforced (require_uppercase=true)" if {
+    to_number(input.pam_pwquality_conf.ucredit) >= 0
+}
+{%- endif %}
+
+{%- if require_digit %}
+
+violations contains "dcredit not enforced (require_digit=true)" if {
+    to_number(input.pam_pwquality_conf.dcredit) >= 0
+}
+{%- endif %}
+
+{%- if require_symbol %}
+
+violations contains "ocredit not enforced (require_symbol=true)" if {
+    to_number(input.pam_pwquality_conf.ocredit) >= 0
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "password_complexity",
+    "target": "linux",
+    "compliant": compliant,
+    "violations": violations,
+}

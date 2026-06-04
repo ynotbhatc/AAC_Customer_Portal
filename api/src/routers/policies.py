@@ -43,11 +43,15 @@ from ..core.ir_extractor import (
 )
 from ..core.llm_client import LlmError, get_llm_client
 from ..core.portal_db import get_portal_pool
+from ..core.rego_generator import GeneratedRego, generate_targets
+from ..core.rego_validator import OpaBinaryMissing, OpaVersionTooOld
 from ..core.sessions import require_tenant_user_mfa
 from ..models.customer_policy import (
     CustomerPolicyDetail,
     CustomerPolicySummary,
+    GeneratedTargetSummary,
     IRExtractionResponse,
+    RegoGenerationResponse,
     UploadAccepted,
 )
 
@@ -355,4 +359,187 @@ async def extract_policy_ir(
         controls_matched_library=matched,
         controls_freeform=freeform,
         ir_json=ir_dict,
+    )
+
+
+@router.post(
+    "/{policy_id}/generate-rego",
+    response_model=RegoGenerationResponse,
+    status_code=200,
+)
+async def generate_policy_rego(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+) -> RegoGenerationResponse:
+    """Hybrid Rego generation.
+
+    Reads the IR from `customer_policies.ir_json`, walks each control's
+    applicability list, generates one Rego module per (control × target).
+    Mappings present in `target_mappings` use Jinja templates from the
+    library; misses fall through to the LLM with one bounded repair
+    attempt.
+
+    Re-running on the same policy: existing customer_policy_targets rows
+    for the same (control, target_system) pair are replaced; the previous
+    rego_storage_key is left in policy_uploads (the audit trail keeps
+    the history of what was generated when).
+    """
+    policy = await pool.fetchrow(
+        """
+        SELECT id, name, effective_date, ir_json
+          FROM customer_policies
+         WHERE id = $1 AND tenant_id = $2
+        """,
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if policy is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    if not policy["ir_json"]:
+        raise HTTPException(
+            status_code=409,
+            detail="policy has no IR; call /extract-ir first",
+        )
+
+    try:
+        llm = get_llm_client()
+    except LlmError as exc:
+        # Generation can still proceed for pure-template controls, but if
+        # ANY control fans out to an unmapped target the request fails.
+        # For Phase 2 we keep this simple: no LLM key → no generation.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    s = get_settings()
+
+    ir = policy["ir_json"]
+    if isinstance(ir, str):
+        # PostgreSQL JSONB → asyncpg returns a dict already, but defend
+        # against the (unlikely) string roundtrip case.
+        import json
+
+        ir = json.loads(ir)
+
+    all_generated: list[tuple[dict[str, Any], GeneratedRego]] = []
+    try:
+        for control in ir.get("controls", []):
+            for gen in await generate_targets(
+                pool=pool,
+                tenant_id=str(tenant_user["tenant_id"]),
+                policy_name=policy["name"],
+                effective_date=(
+                    policy["effective_date"].isoformat()
+                    if policy["effective_date"]
+                    else None
+                ),
+                ir_control=control,
+                llm=llm,
+            ):
+                all_generated.append((control, gen))
+    except (OpaBinaryMissing, OpaVersionTooOld) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LlmError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    bundle_store = get_bundle_store()
+    summaries: list[GeneratedTargetSummary] = []
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for control, gen in all_generated:
+                control_key = control.get("abstract_control_key") or "freeform"
+                filename = f"{control_key}__{gen.target_system}.rego"
+                storage_key, _artifact_id = await bundle_store.put_rego(
+                    tenant_id=tenant_user["tenant_id"],
+                    uploaded_by_user_id=tenant_user["tenant_user_id"],
+                    filename=filename,
+                    rego_text=gen.rego_text,
+                    conn=conn,
+                )
+                import hashlib
+
+                sha = hashlib.sha256(gen.rego_text.encode("utf-8")).hexdigest()
+
+                # Replace any prior target row for the same (policy, target,
+                # subtype) tuple so re-runs are idempotent at the model layer.
+                await conn.execute(
+                    """
+                    DELETE FROM customer_policy_targets
+                     WHERE customer_policy_id = $1
+                       AND target_system = $2
+                       AND COALESCE(target_subtype, '') = COALESCE($3, '')
+                    """,
+                    policy_id,
+                    gen.target_system,
+                    gen.target_subtype,
+                )
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO customer_policy_targets
+                        (customer_policy_id, target_system, target_subtype,
+                         rego_storage_key, rego_content_sha256,
+                         generation_method, confidence_score, review_status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    RETURNING id
+                    """,
+                    policy_id,
+                    gen.target_system,
+                    gen.target_subtype,
+                    storage_key,
+                    sha,
+                    gen.generation_method,
+                    gen.confidence_score,
+                    gen.review_status,
+                )
+                summaries.append(
+                    GeneratedTargetSummary(
+                        customer_policy_target_id=row["id"],
+                        target_system=gen.target_system,
+                        target_subtype=gen.target_subtype,
+                        generation_method=gen.generation_method,
+                        confidence_score=gen.confidence_score,
+                        review_status=gen.review_status,
+                        opa_check_ok=gen.opa_check_ok,
+                        rego_storage_key=storage_key,
+                        rego_content_sha256=sha,
+                        llm_attempts=gen.llm_attempts,
+                        model=gen.model,
+                        opa_check_stderr=(
+                            gen.opa_check_stderr
+                            if gen.review_status == "rejected"
+                            else None
+                        ),
+                    )
+                )
+
+            # Single audit-log line for the batch.
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'rego_generated',
+                        jsonb_build_object(
+                            'targets_generated', $4::int,
+                            'targets_pending', $5::int,
+                            'targets_rejected', $6::int,
+                            'opa_version_floor',
+                              format('%s.%s', $7::int, $8::int)))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                policy_id,
+                len(summaries),
+                sum(1 for s in summaries if s.review_status == "pending"),
+                sum(1 for s in summaries if s.review_status == "rejected"),
+                s.opa_min_version_major,
+                s.opa_min_version_minor,
+            )
+
+    return RegoGenerationResponse(
+        customer_policy_id=policy_id,
+        targets_generated=len(summaries),
+        targets_pending_review=sum(1 for s in summaries if s.review_status == "pending"),
+        targets_rejected=sum(1 for s in summaries if s.review_status == "rejected"),
+        targets=summaries,
     )

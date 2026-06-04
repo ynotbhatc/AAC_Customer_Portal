@@ -1,0 +1,67 @@
+# Customer policy — password complexity (Network device — Cisco IOS / Juniper)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# Network-device password policy is per-vendor; this template covers the
+# two common vendors via the same Rego that scans running-config lines.
+# Both Cisco IOS and Juniper JunOS surface "configure password requirements"
+# through commands the running-config preserves verbatim.
+#
+# Expects facts shaped as input.running_config_lines — array of strings,
+# one per line of the device's running config.
+
+package customer.{{ tenant_slug }}.password_complexity.network_device
+
+import rego.v1
+
+default compliant := false
+
+{%- if min_length is defined %}
+
+# Cisco IOS: "security passwords min-length <N>"
+has_cisco_min_length if {
+    some line in input.running_config_lines
+    parts := regex.find_all_string_submatch_n(`^security passwords min-length (\d+)`, line, 1)
+    count(parts) > 0
+    to_number(parts[0][1]) >= {{ min_length }}
+}
+
+# Juniper JunOS: "set system login password minimum-length <N>"
+has_juniper_min_length if {
+    some line in input.running_config_lines
+    parts := regex.find_all_string_submatch_n(`^set system login password minimum-length (\d+)`, line, 1)
+    count(parts) > 0
+    to_number(parts[0][1]) >= {{ min_length }}
+}
+
+violations contains sprintf("device does not enforce min password length >= {{ min_length }}", []) if {
+    not has_cisco_min_length
+    not has_juniper_min_length
+}
+{%- endif %}
+
+{%- if min_character_classes is defined or require_lowercase or require_uppercase or require_digit or require_symbol %}
+
+# Cisco IOS: "aaa password complexity enabled" or "security passwords complexity"
+has_cisco_complexity if {
+    some line in input.running_config_lines
+    regex.match(`^(aaa password complexity enabled|security passwords complexity)`, line)
+}
+
+violations contains "device does not enforce password complexity" if {
+    not has_cisco_complexity
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "password_complexity",
+    "target": "network_device",
+    "compliant": compliant,
+    "violations": violations,
+}

@@ -1,0 +1,48 @@
+# Customer policy — password complexity (Kubernetes)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# Password-complexity-as-applied-to-Kubernetes is a different shape than the
+# OS targets. Kubernetes doesn't have user passwords (auth is RBAC + tokens),
+# so this template enforces Pod Security Admission's restricted profile as a
+# proxy: it's the closest cluster-side equivalent that ensures users aren't
+# storing passwords in env vars / ConfigMaps and that workloads can't run
+# privileged. If the IR's parameters don't map (Kubernetes truly doesn't
+# implement password_complexity natively), the LLM-fallback path in PR 7
+# should handle it instead.
+#
+# Expects facts shaped as input.psa_labels — { namespace: { enforce, audit, warn } }.
+
+package customer.{{ tenant_slug }}.password_complexity.kubernetes
+
+import rego.v1
+
+default compliant := false
+
+violations contains msg if {
+    some ns, labels in input.psa_labels
+    not is_system_namespace(ns)
+    labels.enforce != "restricted"
+    msg := sprintf("namespace=%q has psa enforce=%q (required: restricted)", [ns, labels.enforce])
+}
+
+is_system_namespace(ns) if {
+    startswith(ns, "kube-")
+}
+
+is_system_namespace(ns) if {
+    startswith(ns, "openshift-")
+}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "password_complexity",
+    "target": "kubernetes",
+    "compliant": compliant,
+    "violations": violations,
+}

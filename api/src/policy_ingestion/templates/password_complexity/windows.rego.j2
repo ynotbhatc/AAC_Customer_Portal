@@ -1,0 +1,43 @@
+# Customer policy — password complexity (Windows Server)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+# Effective:     {{ effective_date | default('') }}
+#
+# Expects facts shaped as input.secedit — a dict mirroring the output of
+# `secedit /export /cfg ...`. Tested against Ansible facts gathered by
+# AAC's enhanced_cis_fact_collection.yml (Windows section).
+
+package customer.{{ tenant_slug }}.password_complexity.windows
+
+import rego.v1
+
+default compliant := false
+
+{%- if min_length is defined %}
+
+violations contains msg if {
+    actual := to_number(input.secedit["System Access"].MinimumPasswordLength)
+    actual < {{ min_length }}
+    msg := sprintf("MinimumPasswordLength=%d (required >= {{ min_length }})", [actual])
+}
+{%- endif %}
+
+{%- if min_character_classes is defined or require_lowercase or require_uppercase or require_digit or require_symbol %}
+
+violations contains "PasswordComplexity disabled" if {
+    to_number(input.secedit["System Access"].PasswordComplexity) == 0
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "password_complexity",
+    "target": "windows",
+    "compliant": compliant,
+    "violations": violations,
+}

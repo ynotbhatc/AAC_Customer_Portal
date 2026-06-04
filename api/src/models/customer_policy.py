@@ -51,6 +51,31 @@ class CustomerPolicyDetail(CustomerPolicySummary):
     ir_json: dict | None = None
 
 
+class GeneratedTargetSummary(BaseModel):
+    """One per-target Rego artifact summary returned by the generator."""
+    customer_policy_target_id: UUID
+    target_system: str
+    target_subtype: str | None = None
+    generation_method: str       # template_mapped | llm_fallback
+    confidence_score: float | None = None
+    review_status: str           # pending | rejected
+    opa_check_ok: bool
+    rego_storage_key: str
+    rego_content_sha256: str
+    llm_attempts: int
+    model: str | None = None
+    opa_check_stderr: str | None = None  # populated only when review_status='rejected'
+
+
+class RegoGenerationResponse(BaseModel):
+    """Returned by POST /portal/v1/me/policies/{id}/generate-rego."""
+    customer_policy_id: UUID
+    targets_generated: int
+    targets_pending_review: int
+    targets_rejected: int
+    targets: list[GeneratedTargetSummary]
+
+
 class IRExtractionResponse(BaseModel):
     """Returned by POST /portal/v1/me/policies/{id}/extract-ir.
 
