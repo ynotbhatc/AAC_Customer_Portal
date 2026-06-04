@@ -15,6 +15,9 @@ import PortalResetPasswordPage from "./pages/PortalResetPasswordPage";
 import PortalHomePage from "./pages/PortalHomePage";
 import PortalMfaSetupPage from "./pages/PortalMfaSetupPage";
 import PortalMfaVerifyPage from "./pages/PortalMfaVerifyPage";
+import PortalPoliciesPage from "./pages/PortalPoliciesPage";
+import PortalPolicyUploadPage from "./pages/PortalPolicyUploadPage";
+import PortalPolicyDetailPage from "./pages/PortalPolicyDetailPage";
 import { getAdminToken, getUserSession } from "./lib/auth";
 
 const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
@@ -75,6 +78,30 @@ export default function App() {
         element={
           <RequirePortalUser>
             <PortalMfaVerifyPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/policies"
+        element={
+          <RequirePortalUser>
+            <PortalPoliciesPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/policies/upload"
+        element={
+          <RequirePortalUser>
+            <PortalPolicyUploadPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/policies/:id"
+        element={
+          <RequirePortalUser>
+            <PortalPolicyDetailPage />
           </RequirePortalUser>
         }
       />

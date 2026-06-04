@@ -443,4 +443,61 @@ export const userTotpVerify = async (body: TotpVerifyRequest): Promise<void> => 
   if (s) setUserSession({ ...s, mfaVerified: true });
 };
 
+// ── Policies — Path A upload + list + detail + actions (PR 17) ───────
+
+import type {
+  CustomerPolicyDetail,
+  CustomerPolicySummary,
+  IRExtractionResponse,
+  RegoGenerationResponse,
+  TargetSummary,
+  UploadAccepted,
+} from "../types/policy";
+
+export const userPoliciesList = (params?: {
+  framework_bucket?: string;
+  status?: string;
+}): Promise<CustomerPolicySummary[]> =>
+  userApi
+    .get<CustomerPolicySummary[]>("/portal/v1/me/policies", { params })
+    .then((r) => r.data);
+
+export const userPolicyDetail = (id: string): Promise<CustomerPolicyDetail> =>
+  userApi
+    .get<CustomerPolicyDetail>(`/portal/v1/me/policies/${id}`)
+    .then((r) => r.data);
+
+export const userPolicyUpload = (
+  name: string,
+  frameworkBucket: string,
+  file: File
+): Promise<UploadAccepted> => {
+  const fd = new FormData();
+  fd.append("name", name);
+  fd.append("framework_bucket", frameworkBucket);
+  fd.append("file", file);
+  // Don't set Content-Type — let the browser produce the correct
+  // multipart boundary.
+  return userApi
+    .post<UploadAccepted>("/portal/v1/me/policies/upload", fd)
+    .then((r) => r.data);
+};
+
+export const userPolicyExtractIr = (id: string): Promise<IRExtractionResponse> =>
+  userApi
+    .post<IRExtractionResponse>(`/portal/v1/me/policies/${id}/extract-ir`)
+    .then((r) => r.data);
+
+export const userPolicyGenerateRego = (
+  id: string
+): Promise<RegoGenerationResponse> =>
+  userApi
+    .post<RegoGenerationResponse>(`/portal/v1/me/policies/${id}/generate-rego`)
+    .then((r) => r.data);
+
+export const userPolicyTargets = (id: string): Promise<TargetSummary[]> =>
+  userApi
+    .get<TargetSummary[]>(`/portal/v1/me/policies/${id}/targets`)
+    .then((r) => r.data);
+
 export default api;
