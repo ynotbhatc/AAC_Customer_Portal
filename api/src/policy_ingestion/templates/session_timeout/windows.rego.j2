@@ -1,0 +1,49 @@
+# Customer policy — session timeout (Windows Server)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# Windows enforces idle timeout through three settings:
+#   * Local security policy: "Microsoft network server: Amount of idle
+#     time required before suspending session" (SMB)
+#   * Local security policy: "Interactive logon: Machine inactivity limit"
+#     (console + RDP, value in seconds)
+#   * Screensaver group policy (less reliable, not checked here)
+#
+# Expects input.secedit shaped like the CIS Benchmark scraper output.
+
+package customer.{{ tenant_slug }}.session_timeout.windows
+
+import rego.v1
+
+default compliant := false
+
+{%- if idle_timeout_minutes is defined %}
+
+violations contains msg if {
+    raw := input.secedit["Registry Values"]["MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\InactivityTimeoutSecs"]
+    actual := to_number(raw)
+    actual == 0
+    msg := "Machine inactivity limit not set"
+}
+
+violations contains msg if {
+    raw := input.secedit["Registry Values"]["MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\InactivityTimeoutSecs"]
+    actual := to_number(raw)
+    actual > 0
+    actual > ({{ idle_timeout_minutes }} * 60)
+    msg := sprintf("InactivityTimeoutSecs=%ds exceeds policy {{ idle_timeout_minutes }} minutes", [actual])
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "session_timeout",
+    "target": "windows",
+    "compliant": compliant,
+    "violations": violations,
+}

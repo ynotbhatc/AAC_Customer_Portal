@@ -1,0 +1,51 @@
+# Customer policy — audit log retention (Cisco IOS / Juniper)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# Network devices typically can't retain N days of logs locally (small
+# flash); compliance retention comes from FORWARDING to a central syslog
+# collector. We enforce the existence of at least one external logging
+# host and reject local-only configs.
+#
+# Cisco IOS:   `logging host <ip>` or `logging server <ip>`
+# Juniper:     `set system syslog host <ip>`
+
+package customer.{{ tenant_slug }}.audit_log_retention.network_device
+
+import rego.v1
+
+default compliant := false
+
+{%- if retention_days is defined %}
+
+# Cisco IOS forwarding line.
+has_cisco_remote_logging if {
+    some line in input.running_config_lines
+    regex.match(`^logging (host|server) `, line)
+}
+
+# Juniper syslog host.
+has_juniper_remote_logging if {
+    some line in input.running_config_lines
+    regex.match(`^set system syslog host `, line)
+}
+
+violations contains msg if {
+    not has_cisco_remote_logging
+    not has_juniper_remote_logging
+    msg := sprintf("device does not forward logs to a remote collector; cannot meet {{ retention_days }}-day retention locally", [])
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "audit_log_retention",
+    "target": "network_device",
+    "compliant": compliant,
+    "violations": violations,
+}
