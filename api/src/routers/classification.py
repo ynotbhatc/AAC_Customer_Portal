@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 
 from ..core.auth import require_admin
 from ..core.portal_db import get_portal_pool
@@ -145,7 +145,7 @@ async def tag_bucket(
     return {"cve_id": cve_id, "bucket": bucket_key, "method": "operator"}
 
 
-@router.delete("/cves/{cve_id}/tags/buckets/{bucket_key}", status_code=204)
+@router.delete("/cves/{cve_id}/tags/buckets/{bucket_key}", status_code=204, response_class=Response, response_model=None)
 async def untag_bucket(
     cve_id: Annotated[str, Path()],
     bucket_key: Annotated[str, Path()],
@@ -179,7 +179,7 @@ async def tag_vendor(
     return {"cve_id": cve_id, "vendor": vendor_key, "method": "operator"}
 
 
-@router.delete("/cves/{cve_id}/tags/vendors/{vendor_key}", status_code=204)
+@router.delete("/cves/{cve_id}/tags/vendors/{vendor_key}", status_code=204, response_class=Response, response_model=None)
 async def untag_vendor(
     cve_id: Annotated[str, Path()],
     vendor_key: Annotated[str, Path()],

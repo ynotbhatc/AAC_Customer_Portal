@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field
 
 from ..core.auth import require_admin
@@ -91,7 +91,7 @@ async def enroll_bucket(
     return {"tenant_id": tenant_id, "bucket": bucket_key}
 
 
-@router.delete("/enrollments/{bucket_key}", status_code=204)
+@router.delete("/enrollments/{bucket_key}", status_code=204, response_class=Response, response_model=None)
 async def unenroll_bucket(
     tenant_id: Annotated[str, Path()],
     bucket_key: Annotated[str, Path()],
@@ -154,7 +154,7 @@ async def set_vendor_sub(
     return {"tenant_id": tenant_id, "vendor": vendor_key, "allow": body.allow}
 
 
-@router.delete("/vendor-subscriptions/{vendor_key}", status_code=204)
+@router.delete("/vendor-subscriptions/{vendor_key}", status_code=204, response_class=Response, response_model=None)
 async def remove_vendor_sub(
     tenant_id: Annotated[str, Path()],
     vendor_key: Annotated[str, Path()],
