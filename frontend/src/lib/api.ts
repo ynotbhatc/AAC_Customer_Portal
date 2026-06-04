@@ -500,4 +500,50 @@ export const userPolicyTargets = (id: string): Promise<TargetSummary[]> =>
     .get<TargetSummary[]>(`/portal/v1/me/policies/${id}/targets`)
     .then((r) => r.data);
 
+// ── Standard library + fork (Path B, PR 18) ──────────────────────────
+
+import type {
+  ForkRequest,
+  ForkResponse,
+  LibraryStats,
+  StandardFileContent,
+  StandardFileMeta,
+  UpstreamDiff,
+} from "../types/library";
+
+export const userLibraryStats = (): Promise<LibraryStats> =>
+  userApi
+    .get<LibraryStats>("/portal/v1/standard-library/stats")
+    .then((r) => r.data);
+
+export const userLibraryCategories = (): Promise<string[]> =>
+  userApi
+    .get<string[]>("/portal/v1/standard-library/categories")
+    .then((r) => r.data);
+
+export const userLibraryFiles = (params?: {
+  prefix?: string;
+  limit?: number;
+}): Promise<StandardFileMeta[]> =>
+  userApi
+    .get<StandardFileMeta[]>("/portal/v1/standard-library/files", { params })
+    .then((r) => r.data);
+
+export const userLibraryFile = (path: string): Promise<StandardFileContent> =>
+  userApi
+    .get<StandardFileContent>("/portal/v1/standard-library/file", {
+      params: { path },
+    })
+    .then((r) => r.data);
+
+export const userPolicyFork = (body: ForkRequest): Promise<ForkResponse> =>
+  userApi
+    .post<ForkResponse>("/portal/v1/me/policies/fork", body)
+    .then((r) => r.data);
+
+export const userPolicyUpstreamDiff = (id: string): Promise<UpstreamDiff> =>
+  userApi
+    .get<UpstreamDiff>(`/portal/v1/me/policies/${id}/upstream-diff`)
+    .then((r) => r.data);
+
 export default api;

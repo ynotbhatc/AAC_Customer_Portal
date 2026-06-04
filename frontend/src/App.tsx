@@ -18,6 +18,9 @@ import PortalMfaVerifyPage from "./pages/PortalMfaVerifyPage";
 import PortalPoliciesPage from "./pages/PortalPoliciesPage";
 import PortalPolicyUploadPage from "./pages/PortalPolicyUploadPage";
 import PortalPolicyDetailPage from "./pages/PortalPolicyDetailPage";
+import PortalLibraryPage from "./pages/PortalLibraryPage";
+import PortalLibraryFilePage from "./pages/PortalLibraryFilePage";
+import PortalUpstreamDiffPage from "./pages/PortalUpstreamDiffPage";
 import { getAdminToken, getUserSession } from "./lib/auth";
 
 const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
@@ -102,6 +105,30 @@ export default function App() {
         element={
           <RequirePortalUser>
             <PortalPolicyDetailPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/policies/:id/upstream-diff"
+        element={
+          <RequirePortalUser>
+            <PortalUpstreamDiffPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/library"
+        element={
+          <RequirePortalUser>
+            <PortalLibraryPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/library/file"
+        element={
+          <RequirePortalUser>
+            <PortalLibraryFilePage />
           </RequirePortalUser>
         }
       />
