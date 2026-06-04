@@ -54,7 +54,6 @@ from ..core.standard_library import (
     LibraryNotConfigured,
     get_file as std_get_file,
 )
-import re
 
 from ..models.customer_policy import (
     CustomerPolicyDetail,
@@ -1242,21 +1241,7 @@ async def reject_policy_target(
 # ── Republish flow ────────────────────────────────────────────────────
 
 
-_SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
-
-
-def _bump_patch(version_semver: str) -> str | None:
-    """Bump the patch component of a vMAJ.MIN.PATCH string.
-
-    Preserves the leading 'v' if present. Returns None if the input
-    doesn't parse — the router then requires the caller to supply
-    new_version_semver explicitly."""
-    match = _SEMVER_RE.match(version_semver.strip())
-    if not match:
-        return None
-    major, minor, patch = (int(g) for g in match.groups())
-    prefix = "v" if version_semver.lstrip().startswith("v") else ""
-    return f"{prefix}{major}.{minor}.{patch + 1}"
+from ..core.semver_util import bump_patch as _bump_patch  # noqa: E402
 
 
 @router.post(

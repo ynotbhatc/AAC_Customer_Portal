@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+# pytest discovers tests/ at the api/ root. asyncio_mode=auto means
+# `async def test_*` works without per-function decorators.
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    # Pydantic v2 deprecation warnings from older third-party libs are
+    # noise — keep them out of the test output.
+    "ignore::DeprecationWarning:pydantic",
+]
+addopts = "-ra --strict-markers"
+
+[tool.pytest_env]
+# Settings used by the pure-function tests. core/config.py reads from
+# the environment; these defaults keep config import-time work happy
+# without a real DB.
+PG_PASSWORD = "test"
+PORTAL_PG_PASSWORD = "test"
+PORTAL_ADMIN_TOKEN = "test-admin-token"
