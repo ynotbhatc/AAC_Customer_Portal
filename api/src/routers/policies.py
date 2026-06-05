@@ -54,12 +54,16 @@ from ..core.standard_library import (
     LibraryNotConfigured,
     get_file as std_get_file,
 )
+import re
+
 from ..models.customer_policy import (
     CustomerPolicyDetail,
     CustomerPolicySummary,
     GeneratedTargetSummary,
     IRExtractionResponse,
     RegoGenerationResponse,
+    RepublishRequest,
+    RepublishResponse,
     UploadAccepted,
 )
 from ..models.standard_library import ForkRequest, ForkResponse, UpstreamDiff
@@ -1233,3 +1237,179 @@ async def reject_policy_target(
             )
 
     return dict(row)
+
+
+# ── Republish flow ────────────────────────────────────────────────────
+
+
+_SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+
+
+def _bump_patch(version_semver: str) -> str | None:
+    """Bump the patch component of a vMAJ.MIN.PATCH string.
+
+    Preserves the leading 'v' if present. Returns None if the input
+    doesn't parse — the router then requires the caller to supply
+    new_version_semver explicitly."""
+    match = _SEMVER_RE.match(version_semver.strip())
+    if not match:
+        return None
+    major, minor, patch = (int(g) for g in match.groups())
+    prefix = "v" if version_semver.lstrip().startswith("v") else ""
+    return f"{prefix}{major}.{minor}.{patch + 1}"
+
+
+@router.post(
+    "/{policy_id}/republish",
+    response_model=RepublishResponse,
+    status_code=201,
+)
+async def republish_policy(
+    body: RepublishRequest,
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+) -> RepublishResponse:
+    """Create a draft successor to a published policy.
+
+    The new row inherits every content field (name, framework_bucket,
+    policy_source, IR JSON, source storage key, parent_standard_*),
+    bumps version_semver, and starts in status='draft'. Existing
+    customer_policy_targets rows are copied 1:1 with their rego
+    artifacts and review_status preserved — same Rego content means
+    the prior review verdict still applies.
+
+    The original published policy is left untouched (the immutability
+    trigger guarantees that). Customers can then edit / approve /
+    publish the new draft like any other.
+    """
+    parent = await pool.fetchrow(
+        """
+        SELECT id, name, framework_bucket, policy_source, version_semver,
+               status, ir_json, source_file_storage_key, source_file_mime,
+               parent_standard_ref, parent_standard_version,
+               control_owner_user_id, review_cadence_days
+          FROM customer_policies
+         WHERE id = $1 AND tenant_id = $2
+        """,
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if parent is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    if parent["status"] != "published":
+        raise HTTPException(
+            status_code=409,
+            detail=f"republish only applies to published policies; "
+            f"this is {parent['status']}. Edit the draft directly.",
+        )
+
+    if body.new_version_semver:
+        new_version = body.new_version_semver.strip()
+    else:
+        new_version = _bump_patch(parent["version_semver"])
+        if new_version is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"parent version_semver={parent['version_semver']!r} "
+                "doesn't match vMAJ.MIN.PATCH; supply new_version_semver "
+                "explicitly",
+            )
+
+    collision = await pool.fetchval(
+        """
+        SELECT 1 FROM customer_policies
+         WHERE tenant_id = $1 AND name = $2 AND version_semver = $3
+        """,
+        tenant_user["tenant_id"],
+        parent["name"],
+        new_version,
+    )
+    if collision:
+        raise HTTPException(
+            status_code=409,
+            detail=f"version {new_version!r} already exists for this policy "
+            f"name; pick a higher version",
+        )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            new_policy = await conn.fetchrow(
+                """
+                INSERT INTO customer_policies
+                    (tenant_id, name, framework_bucket, policy_source,
+                     source_file_storage_key, source_file_mime, ir_json,
+                     parent_standard_ref, parent_standard_version,
+                     version_semver, status,
+                     control_owner_user_id, review_cadence_days,
+                     created_by)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'draft',
+                        $11, $12, $13)
+                RETURNING id
+                """,
+                tenant_user["tenant_id"],
+                parent["name"],
+                parent["framework_bucket"],
+                parent["policy_source"],
+                parent["source_file_storage_key"],
+                parent["source_file_mime"],
+                parent["ir_json"],
+                parent["parent_standard_ref"],
+                parent["parent_standard_version"],
+                new_version,
+                parent["control_owner_user_id"],
+                parent["review_cadence_days"],
+                tenant_user["tenant_user_id"],
+            )
+
+            # Copy targets 1:1. published_in_bundle_sha is NOT carried
+            # forward — the new policy hasn't shipped yet. The Rego
+            # artifact (pgrego key) is shared with the parent; both
+            # rows point at the same policy_uploads row. Customers
+            # who PATCH a target post-republish create a new artifact
+            # row, leaving the parent's reference intact.
+            target_copies = await conn.fetch(
+                """
+                INSERT INTO customer_policy_targets
+                    (customer_policy_id, target_system, target_subtype,
+                     rego_storage_key, rego_content_sha256,
+                     generation_method, confidence_score, review_status)
+                SELECT $1, target_system, target_subtype,
+                       rego_storage_key, rego_content_sha256,
+                       generation_method, confidence_score, review_status
+                  FROM customer_policy_targets
+                 WHERE customer_policy_id = $2
+                RETURNING id
+                """,
+                new_policy["id"],
+                policy_id,
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'republished_from',
+                        jsonb_build_object(
+                            'parent_policy_id', $4::text,
+                            'parent_version_semver', $5::text,
+                            'new_version_semver', $6::text,
+                            'targets_copied', $7::int))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                new_policy["id"],
+                str(policy_id),
+                parent["version_semver"],
+                new_version,
+                len(target_copies),
+            )
+
+    return RepublishResponse(
+        new_customer_policy_id=new_policy["id"],
+        new_version_semver=new_version,
+        targets_copied=len(target_copies),
+        parent_policy_id=policy_id,
+        parent_version_semver=parent["version_semver"],
+    )
