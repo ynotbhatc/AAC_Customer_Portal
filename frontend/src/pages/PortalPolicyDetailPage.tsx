@@ -121,6 +121,12 @@ export default function PortalPolicyDetailPage() {
               <Field label="Parent standard">
                 <code className="text-xs">{policy.parent_standard_ref}</code>{" "}
                 @ <code className="text-xs">{policy.parent_standard_version}</code>
+                <Link
+                  to={`/portal/policies/${policy.id}/upstream-diff`}
+                  className="ml-3 text-xs text-brand-600 hover:underline"
+                >
+                  View diff vs upstream
+                </Link>
               </Field>
             ) : null}
             <Field label="Source MIME">

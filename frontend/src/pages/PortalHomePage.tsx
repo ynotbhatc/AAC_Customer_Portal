@@ -173,7 +173,7 @@ export default function PortalHomePage() {
             building your tenant's Rego bundle. Both paths converge on the
             same review + publish workflow.
           </p>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               className="btn-primary text-sm"
@@ -189,9 +189,16 @@ export default function PortalHomePage() {
             >
               Upload a policy
             </button>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => navigate("/portal/library")}
+            >
+              Browse standard library
+            </button>
             {me && me.mfa_required && !me.mfa_verified ? (
               <span className="text-xs text-amber-700">
-                MFA verification required before uploading.
+                MFA verification required for upload + fork.
               </span>
             ) : null}
           </div>
