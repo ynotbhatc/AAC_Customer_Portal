@@ -450,6 +450,9 @@ import type {
   CustomerPolicySummary,
   IRExtractionResponse,
   RegoGenerationResponse,
+  TargetDetail,
+  TargetEditRequest,
+  TargetReviewAction,
   TargetSummary,
   UploadAccepted,
 } from "../types/policy";
@@ -498,6 +501,50 @@ export const userPolicyGenerateRego = (
 export const userPolicyTargets = (id: string): Promise<TargetSummary[]> =>
   userApi
     .get<TargetSummary[]>(`/portal/v1/me/policies/${id}/targets`)
+    .then((r) => r.data);
+
+export const userPolicyTargetDetail = (
+  policyId: string,
+  targetId: string
+): Promise<TargetDetail> =>
+  userApi
+    .get<TargetDetail>(`/portal/v1/me/policies/${policyId}/targets/${targetId}`)
+    .then((r) => r.data);
+
+export const userPolicyTargetEdit = (
+  policyId: string,
+  targetId: string,
+  body: TargetEditRequest
+): Promise<TargetDetail> =>
+  userApi
+    .patch<TargetDetail>(
+      `/portal/v1/me/policies/${policyId}/targets/${targetId}`,
+      body
+    )
+    .then((r) => r.data);
+
+export const userPolicyTargetApprove = (
+  policyId: string,
+  targetId: string,
+  body: TargetReviewAction
+): Promise<TargetSummary> =>
+  userApi
+    .post<TargetSummary>(
+      `/portal/v1/me/policies/${policyId}/targets/${targetId}/approve`,
+      body
+    )
+    .then((r) => r.data);
+
+export const userPolicyTargetReject = (
+  policyId: string,
+  targetId: string,
+  body: TargetReviewAction
+): Promise<TargetSummary> =>
+  userApi
+    .post<TargetSummary>(
+      `/portal/v1/me/policies/${policyId}/targets/${targetId}/reject`,
+      body
+    )
     .then((r) => r.data);
 
 // ── Standard library + fork (Path B, PR 18) ──────────────────────────

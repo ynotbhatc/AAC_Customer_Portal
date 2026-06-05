@@ -18,6 +18,7 @@ import PortalMfaVerifyPage from "./pages/PortalMfaVerifyPage";
 import PortalPoliciesPage from "./pages/PortalPoliciesPage";
 import PortalPolicyUploadPage from "./pages/PortalPolicyUploadPage";
 import PortalPolicyDetailPage from "./pages/PortalPolicyDetailPage";
+import PortalPolicyTargetReviewPage from "./pages/PortalPolicyTargetReviewPage";
 import PortalLibraryPage from "./pages/PortalLibraryPage";
 import PortalLibraryFilePage from "./pages/PortalLibraryFilePage";
 import PortalUpstreamDiffPage from "./pages/PortalUpstreamDiffPage";
@@ -113,6 +114,14 @@ export default function App() {
         element={
           <RequirePortalUser>
             <PortalUpstreamDiffPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/policies/:policyId/targets/:targetId"
+        element={
+          <RequirePortalUser>
+            <PortalPolicyTargetReviewPage />
           </RequirePortalUser>
         }
       />

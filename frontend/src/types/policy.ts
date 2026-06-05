@@ -91,3 +91,18 @@ export interface TargetSummary {
   published_in_bundle_sha: string | null;
   created_at: string;
 }
+
+export interface TargetDetail extends TargetSummary {
+  rego_storage_key: string;
+  rego_text: string;
+}
+
+export interface TargetEditRequest {
+  rego_text: string;
+}
+
+// Reason is optional on the wire (Pydantic accepts null), but the UI
+// requires it for /reject and treats it as optional for /approve.
+export interface TargetReviewAction {
+  reason?: string | null;
+}

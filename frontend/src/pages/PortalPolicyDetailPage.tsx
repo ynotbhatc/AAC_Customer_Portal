@@ -250,10 +250,18 @@ export default function PortalPolicyDetailPage() {
               </thead>
               <tbody>
                 {targets.map((t) => (
-                  <tr key={t.id} className="border-t border-slate-100">
+                  <tr
+                    key={t.id}
+                    className="border-t border-slate-100 hover:bg-slate-50"
+                  >
                     <td className="px-4 py-2 font-mono text-xs">
-                      {t.target_system}
-                      {t.target_subtype ? `/${t.target_subtype}` : ""}
+                      <Link
+                        to={`/portal/policies/${policy.id}/targets/${t.id}`}
+                        className="text-brand-600 hover:underline"
+                      >
+                        {t.target_system}
+                        {t.target_subtype ? `/${t.target_subtype}` : ""}
+                      </Link>
                     </td>
                     <td className="px-4 py-2 text-slate-700">
                       {t.generation_method.replace("_", " ")}
@@ -276,8 +284,7 @@ export default function PortalPolicyDetailPage() {
               </tbody>
             </table>
             <p className="px-6 py-3 text-xs text-slate-500 bg-slate-50 border-t border-slate-100">
-              Per-target review (approve / reject / edit Rego) lands in the
-              next PR.
+              Click a target to review (approve / reject / edit Rego).
             </p>
           </section>
         ) : null}
