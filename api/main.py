@@ -7,6 +7,7 @@ from src.core.database import get_pool, close_pool
 from src.core.portal_db import get_portal_pool, close_portal_pool
 from src.routers import (
     auth,
+    baselines,
     bundles,
     classification,
     compliance,
@@ -63,6 +64,8 @@ app.include_router(policies.router, prefix="/api")
 app.include_router(bundles.user_router, prefix="/api")
 app.include_router(bundles.bridge_router, prefix="/api")
 app.include_router(bundles.public_router, prefix="/api")
+app.include_router(baselines.user_router, prefix="/api")
+app.include_router(baselines.bridge_router, prefix="/api")
 app.include_router(standard_library.router, prefix="/api")
 
 

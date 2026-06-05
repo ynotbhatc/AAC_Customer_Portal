@@ -29,6 +29,12 @@ REQUIRED_SCOPE = "cve_feed"
 # Granted via the operator-admin "AAC - Issue Bundle Pull Token" flow.
 BUNDLE_PULL_SCOPE = "policy_bundle_pull"
 
+# Tokens used by the AAC bridge to POST OPA evaluation results as
+# baseline snapshots. Distinct scope so an operator can issue a
+# narrower token that pulls bundles but doesn't write back, or vice
+# versa, even though the typical primary-bridge token holds both.
+BASELINE_PUSH_SCOPE = "baseline_push"
+
 
 def require_tenant_with_scope(scope: str):
     """Dependency factory — produces a `require_tenant`-shaped dependency
