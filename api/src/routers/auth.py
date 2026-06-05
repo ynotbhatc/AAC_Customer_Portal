@@ -18,10 +18,11 @@ Password reset is two-step:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 import asyncpg
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..core.config import get_settings
@@ -35,8 +36,11 @@ from ..core.portal_db import get_portal_pool
 from ..core.sessions import (
     _client_ip,
     create_session,
+    require_tenant_user,
     revoke_all_sessions_for_user,
 )
+from ..core.totp import verify_totp
+from ..models.tenant_mfa import TotpVerifyRequest
 from ..models.tenant_session import (
     LoginRequest,
     PasswordResetConfirm,
@@ -170,3 +174,87 @@ async def password_reset_confirm(
                 """,
                 row["tenant_user_id"],
             )
+
+
+# ── login-time MFA verification ───────────────────────────────────────
+@router.post("/totp/verify", status_code=204)
+async def totp_verify(
+    body: TotpVerifyRequest,
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+) -> None:
+    """Second factor after a successful password login. Authenticated
+    via the partially-verified session (mfa_verified=false) issued by
+    /auth/login. On success, flips that session's mfa_verified to true.
+
+    Accepts either a 6-digit TOTP code OR a backup code. TOTP path
+    first because it's overwhelmingly the common case; backup-code
+    iteration is small (10 rows max) so the fallback is cheap.
+    """
+    if tenant_user.get("mfa_verified"):
+        # Idempotent: already verified, nothing to do.
+        return None
+    if not tenant_user.get("mfa_required"):
+        raise HTTPException(status_code=409, detail="mfa not required for this user")
+
+    # Try TOTP factor first.
+    totp_row = await pool.fetchrow(
+        """
+        SELECT id, secret_hash
+          FROM tenant_user_mfa_factors
+         WHERE tenant_user_id = $1
+           AND factor_type = 'totp'
+           AND factor_label != 'pending_setup'
+           AND revoked_at IS NULL
+         LIMIT 1
+        """,
+        tenant_user["tenant_user_id"],
+    )
+    consumed_factor_id: UUID | None = None
+
+    if totp_row is not None and verify_totp(secret=totp_row["secret_hash"], code=body.code):
+        consumed_factor_id = totp_row["id"]
+    else:
+        # Backup code fallback. Iterate the (≤10) active backup rows.
+        backup_rows = await pool.fetch(
+            """
+            SELECT id, secret_hash
+              FROM tenant_user_mfa_factors
+             WHERE tenant_user_id = $1
+               AND factor_type = 'backup_codes'
+               AND revoked_at IS NULL
+            """,
+            tenant_user["tenant_user_id"],
+        )
+        for r in backup_rows:
+            if bcrypt.checkpw(body.code.encode("utf-8"), r["secret_hash"].encode("utf-8")):
+                consumed_factor_id = r["id"]
+                # Burn the backup code immediately — single use.
+                await pool.execute(
+                    """
+                    UPDATE tenant_user_mfa_factors
+                       SET revoked_at = now(),
+                           last_used_at = now()
+                     WHERE id = $1
+                    """,
+                    consumed_factor_id,
+                )
+                break
+
+    if consumed_factor_id is None:
+        raise HTTPException(status_code=400, detail="incorrect code")
+
+    # Flip the session's mfa_verified bit AND stamp last_used on the
+    # TOTP factor (idempotent if it was a backup code — we already
+    # stamped revoked_at + last_used above).
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE tenant_user_sessions SET mfa_verified = true WHERE id = $1",
+                tenant_user["session_id"],
+            )
+            if totp_row is not None and consumed_factor_id == totp_row["id"]:
+                await conn.execute(
+                    "UPDATE tenant_user_mfa_factors SET last_used_at = now() WHERE id = $1",
+                    consumed_factor_id,
+                )

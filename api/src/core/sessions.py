@@ -202,7 +202,22 @@ async def require_tenant_user(
 
     Use this on every customer-facing portal endpoint that needs a
     logged-in user. Does NOT enforce MFA — endpoints requiring MFA
-    must additionally check `tenant_user['mfa_verified']` or use
-    `require_tenant_user_mfa` once it lands in PR 4.
+    must use `require_tenant_user_mfa` instead.
     """
     return await _resolve_bearer(request, authorization, pool)
+
+
+async def require_tenant_user_mfa(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+) -> dict[str, Any]:
+    """Stricter version of require_tenant_user that rejects sessions
+    whose MFA step is not complete (when MFA is required for the user).
+
+    Use this on any endpoint that writes policy, changes RBAC, or
+    performs sensitive operations. Sessions where mfa_required=true
+    are issued with mfa_verified=false; they must POST to
+    /auth/totp/verify to flip it on before this dependency will pass.
+    """
+    if tenant_user.get("mfa_required") and not tenant_user.get("mfa_verified"):
+        raise HTTPException(status_code=403, detail="mfa verification required")
+    return tenant_user
