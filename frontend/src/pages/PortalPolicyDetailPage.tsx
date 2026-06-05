@@ -5,6 +5,7 @@ import {
   userPolicyExtractIr,
   userPolicyGenerateRego,
   userPolicyPublish,
+  userPolicyRepublish,
   userPolicyTargets,
 } from "../lib/api";
 import { extractErr } from "../lib/utils";
@@ -32,7 +33,10 @@ export default function PortalPolicyDetailPage() {
   const [policy, setPolicy] = useState<CustomerPolicyDetail | null>(null);
   const [targets, setTargets] = useState<TargetSummary[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"ir" | "rego" | "publish" | null>(null);
+  const [busy, setBusy] = useState<
+    "ir" | "rego" | "publish" | "republish" | null
+  >(null);
+  const [republishVersion, setRepublishVersion] = useState("");
 
   const loadAll = () => {
     setErr(null);
@@ -89,6 +93,23 @@ export default function PortalPolicyDetailPage() {
     try {
       await userPolicyPublish(id);
       loadAll();
+    } catch (e) {
+      setErr(extractErr(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onRepublish = async () => {
+    setBusy("republish");
+    setErr(null);
+    try {
+      const result = await userPolicyRepublish(id, {
+        new_version_semver: republishVersion.trim() || null,
+      });
+      // Navigate to the new draft — it inherits IR + targets, so the
+      // customer lands ready to edit rather than starting from scratch.
+      navigate(`/portal/policies/${result.new_customer_policy_id}`);
     } catch (e) {
       setErr(extractErr(e));
     } finally {
@@ -345,21 +366,55 @@ export default function PortalPolicyDetailPage() {
           </div>
 
           {policy.status === "published" ? (
-            <div className="text-sm space-y-3">
-              <div className="inline-block bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-medium">
-                published
+            <div className="text-sm space-y-4">
+              <div className="space-y-2">
+                <div className="inline-block bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-medium">
+                  published
+                </div>
+                <p className="text-slate-600">
+                  This policy is published. Approved targets are eligible to
+                  ship in the next bundle build.
+                </p>
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  onClick={() => navigate("/portal/bundles")}
+                >
+                  Go to bundles →
+                </button>
               </div>
-              <p className="text-slate-600">
-                This policy is published. Approved targets are eligible to
-                ship in the next bundle build.
-              </p>
-              <button
-                type="button"
-                className="btn-primary text-sm"
-                onClick={() => navigate("/portal/bundles")}
-              >
-                Go to bundles →
-              </button>
+
+              <div className="border-t border-slate-200 pt-4 space-y-2">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Create new version
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Need to change this policy? Publish is final — open a
+                  successor draft. The new draft inherits the IR, source
+                  document, and every target (with its review verdict
+                  preserved, since identical Rego means the prior verdict
+                  still applies).
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder={`New version (default: bump ${policy.version_semver})`}
+                    className="text-sm border border-slate-300 rounded px-3 py-2 w-72"
+                    value={republishVersion}
+                    onChange={(e) => setRepublishVersion(e.target.value)}
+                    maxLength={64}
+                    disabled={busy !== null}
+                  />
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    onClick={onRepublish}
+                    disabled={busy !== null}
+                  >
+                    {busy === "republish" ? "Creating…" : "Create new version"}
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <PublishGate

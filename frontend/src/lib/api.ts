@@ -450,6 +450,8 @@ import type {
   CustomerPolicySummary,
   IRExtractionResponse,
   RegoGenerationResponse,
+  RepublishRequest,
+  RepublishResponse,
   TargetDetail,
   TargetEditRequest,
   TargetReviewAction,
@@ -572,6 +574,21 @@ export const userBundleBuild = (): Promise<BuildBundleResponse> =>
 export const userBundleCurrentManifest = (): Promise<BundleManifest> =>
   userApi
     .get<BundleManifest>("/portal/v1/me/bundles/current/manifest")
+    .then((r) => r.data);
+
+// ── Republish (PR 22 of Piece 46) ────────────────────────────────────
+
+// Creates a draft successor to a published policy. Targets are copied
+// 1:1; the original is left untouched (immutability is trigger-enforced).
+export const userPolicyRepublish = (
+  policyId: string,
+  body: RepublishRequest
+): Promise<RepublishResponse> =>
+  userApi
+    .post<RepublishResponse>(
+      `/portal/v1/me/policies/${policyId}/republish`,
+      body
+    )
     .then((r) => r.data);
 
 // ── Audit log (PR 21 of Piece 46) ────────────────────────────────────
