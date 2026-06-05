@@ -23,6 +23,7 @@ import PortalLibraryPage from "./pages/PortalLibraryPage";
 import PortalLibraryFilePage from "./pages/PortalLibraryFilePage";
 import PortalUpstreamDiffPage from "./pages/PortalUpstreamDiffPage";
 import PortalBundlesPage from "./pages/PortalBundlesPage";
+import PortalBundleDetailPage from "./pages/PortalBundleDetailPage";
 import PortalPolicyAuditLogPage from "./pages/PortalPolicyAuditLogPage";
 import { getAdminToken, getUserSession } from "./lib/auth";
 
@@ -132,6 +133,14 @@ export default function App() {
         element={
           <RequirePortalUser>
             <PortalBundlesPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/bundles/:bundleId"
+        element={
+          <RequirePortalUser>
+            <PortalBundleDetailPage />
           </RequirePortalUser>
         }
       />

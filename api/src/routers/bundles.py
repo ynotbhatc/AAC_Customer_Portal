@@ -292,6 +292,49 @@ async def get_current_manifest(
     )
 
 
+@user_router.get("/{bundle_id}/manifest", response_model=BundleManifest)
+async def get_bundle_manifest_by_id(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    bundle_id: UUID = Path(...),
+) -> BundleManifest:
+    """Full manifest for an arbitrary historical bundle.
+
+    The /current/manifest endpoint only returns the most recent
+    bundle; this endpoint lets the history table link each row to
+    its full manifest detail. Tenant-scoped: a bundle ID owned by
+    another tenant 404s identically to a non-existent ID, so we
+    don't leak existence across tenants.
+    """
+    row = await pool.fetchrow(
+        """
+        SELECT id, tenant_id, bundle_sha256, bundle_byte_size,
+               target_count, customer_policy_ids,
+               excluded_target_count, excluded_targets_log,
+               built_at, signing_key_id, manifest
+          FROM policy_bundles
+         WHERE id = $1 AND tenant_id = $2
+        """,
+        bundle_id,
+        tenant_user["tenant_id"],
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="bundle not found")
+    return BundleManifest(
+        bundle_id=row["id"],
+        tenant_id=row["tenant_id"],
+        bundle_sha256=row["bundle_sha256"],
+        bundle_byte_size=row["bundle_byte_size"],
+        target_count=row["target_count"],
+        customer_policy_ids=row["customer_policy_ids"],
+        excluded_target_count=row["excluded_target_count"],
+        excluded_targets_log=row["excluded_targets_log"],
+        built_at=row["built_at"],
+        signing_key_id=row["signing_key_id"],
+        manifest=row["manifest"],
+    )
+
+
 @user_router.get("", response_model=list[BundleHistoryEntry])
 async def list_bundle_history(
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
