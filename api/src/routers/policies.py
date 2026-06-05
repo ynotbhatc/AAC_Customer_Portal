@@ -29,6 +29,7 @@ from fastapi import (
 
 import difflib
 import hashlib
+import json
 
 from ..core.bundle_store import get_bundle_store
 from ..core.config import get_settings
@@ -65,6 +66,7 @@ from ..models.customer_policy import (
     RepublishResponse,
     UploadAccepted,
 )
+from ..models.policy_audit import AuditLogEntry
 from ..models.standard_library import ForkRequest, ForkResponse, UpstreamDiff
 from ..models.target_review import (
     TargetDetail,
@@ -1398,3 +1400,89 @@ async def republish_policy(
         parent_policy_id=policy_id,
         parent_version_semver=parent["version_semver"],
     )
+
+
+# ── Audit log read endpoint ───────────────────────────────────────────
+
+
+@router.get(
+    "/{policy_id}/audit-log",
+    response_model=list[AuditLogEntry],
+)
+async def list_policy_audit_log(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+    limit: int = Query(50, ge=1, le=200),
+    before_id: int | None = Query(
+        None,
+        description="Cursor — return entries with id < before_id. "
+        "Use the smallest id from the prior page.",
+    ),
+) -> list[dict]:
+    """Reverse-chronological audit log for one policy.
+
+    The append-only `policy_audit_log` table records every state change
+    (upload, ir_extracted, rego_generated, target_approved/rejected/
+    edited, published, target_copied_on_republish, ...). This endpoint
+    is the customer-facing read view; it is tenant-scoped and joins
+    `tenant_users` to surface the actor's email.
+
+    Pagination is cursor-based on `id` because `at` is not unique. The
+    caller pages backwards by passing the smallest `id` from the
+    previous response as `before_id`.
+    """
+    # Verify the policy belongs to this tenant; raises 404 if not.
+    owned = await pool.fetchval(
+        "SELECT 1 FROM customer_policies WHERE id = $1 AND tenant_id = $2",
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if owned is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+
+    if before_id is None:
+        rows = await pool.fetch(
+            """
+            SELECT pal.id, pal.action, pal.details, pal.at,
+                   pal.tenant_user_id, tu.email AS actor_email
+              FROM policy_audit_log pal
+              LEFT JOIN tenant_users tu ON tu.id = pal.tenant_user_id
+             WHERE pal.customer_policy_id = $1
+             ORDER BY pal.id DESC
+             LIMIT $2
+            """,
+            policy_id,
+            limit,
+        )
+    else:
+        rows = await pool.fetch(
+            """
+            SELECT pal.id, pal.action, pal.details, pal.at,
+                   pal.tenant_user_id, tu.email AS actor_email
+              FROM policy_audit_log pal
+              LEFT JOIN tenant_users tu ON tu.id = pal.tenant_user_id
+             WHERE pal.customer_policy_id = $1
+               AND pal.id < $2
+             ORDER BY pal.id DESC
+             LIMIT $3
+            """,
+            policy_id,
+            before_id,
+            limit,
+        )
+
+    return [
+        {
+            "id": r["id"],
+            "action": r["action"],
+            "details": r["details"] if isinstance(r["details"], dict)
+            else (json.loads(r["details"]) if r["details"] else {}),
+            "at": r["at"],
+            "tenant_user_id": str(r["tenant_user_id"])
+            if r["tenant_user_id"] is not None
+            else None,
+            "actor_email": r["actor_email"],
+        }
+        for r in rows
+    ]

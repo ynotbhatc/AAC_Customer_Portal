@@ -461,6 +461,7 @@ import type {
   BundleManifest,
   PublishResponse,
 } from "../types/bundle";
+import type { AuditLogEntry } from "../types/audit";
 
 export const userPoliciesList = (params?: {
   framework_bucket?: string;
@@ -571,6 +572,20 @@ export const userBundleBuild = (): Promise<BuildBundleResponse> =>
 export const userBundleCurrentManifest = (): Promise<BundleManifest> =>
   userApi
     .get<BundleManifest>("/portal/v1/me/bundles/current/manifest")
+    .then((r) => r.data);
+
+// ── Audit log (PR 21 of Piece 46) ────────────────────────────────────
+
+// Cursor-paginated: pass the smallest id from the prior page as
+// before_id to walk back through history. The server caps limit at 200.
+export const userPolicyAuditLog = (
+  policyId: string,
+  opts?: { limit?: number; before_id?: number }
+): Promise<AuditLogEntry[]> =>
+  userApi
+    .get<AuditLogEntry[]>(`/portal/v1/me/policies/${policyId}/audit-log`, {
+      params: opts,
+    })
     .then((r) => r.data);
 
 // ── Standard library + fork (Path B, PR 18) ──────────────────────────

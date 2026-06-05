@@ -118,9 +118,15 @@ export default function PortalPolicyDetailPage() {
           >
             ← Policies
           </Link>
-          <h1 className="text-base font-semibold text-slate-900 truncate">
+          <h1 className="text-base font-semibold text-slate-900 truncate flex-1">
             {policy.name}
           </h1>
+          <Link
+            to={`/portal/policies/${policy.id}/audit-log`}
+            className="text-sm text-brand-600 hover:underline whitespace-nowrap"
+          >
+            Audit log →
+          </Link>
         </div>
       </header>
 
