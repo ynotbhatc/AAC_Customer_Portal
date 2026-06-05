@@ -27,6 +27,9 @@ from fastapi import (
     UploadFile,
 )
 
+import difflib
+import hashlib
+
 from ..core.bundle_store import get_bundle_store
 from ..core.config import get_settings
 from ..core.document_parser import (
@@ -46,6 +49,11 @@ from ..core.portal_db import get_portal_pool
 from ..core.rego_generator import GeneratedRego, generate_targets
 from ..core.rego_validator import OpaBinaryMissing, OpaVersionTooOld
 from ..core.sessions import require_tenant_user_mfa
+from ..core.standard_library import (
+    FileNotInLibrary,
+    LibraryNotConfigured,
+    get_file as std_get_file,
+)
 from ..models.customer_policy import (
     CustomerPolicyDetail,
     CustomerPolicySummary,
@@ -54,6 +62,7 @@ from ..models.customer_policy import (
     RegoGenerationResponse,
     UploadAccepted,
 )
+from ..models.standard_library import ForkRequest, ForkResponse, UpstreamDiff
 
 
 router = APIRouter(prefix="/portal/v1/me/policies", tags=["portal:policies"])
@@ -640,4 +649,229 @@ async def publish_policy(
         status=updated["status"],
         published_at=updated["published_at"],
         version_semver=updated["version_semver"],
+    )
+
+
+# ── Path B — fork-and-tweak ───────────────────────────────────────────
+
+
+_TARGET_SYSTEM_HINTS = (
+    ("linux", "linux"),
+    ("windows", "windows"),
+    ("kubernetes", "kubernetes"),
+    ("rhel", "linux"),
+    ("ubuntu", "linux"),
+    ("debian", "linux"),
+    ("docker", "linux"),
+    ("aws", "aws"),
+    ("azure", "azure"),
+    ("gcp", "gcp"),
+    ("m365", "m365"),
+)
+
+
+def _infer_target_system(path: str) -> str:
+    """Best-effort heuristic — path segments often name the platform.
+    Returns 'unknown' if nothing matches; UI can prompt the customer
+    to pick a target explicitly."""
+    lower = path.lower()
+    for needle, system in _TARGET_SYSTEM_HINTS:
+        if needle in lower:
+            return system
+    return "unknown"
+
+
+@router.post(
+    "/fork",
+    response_model=ForkResponse,
+    status_code=201,
+)
+async def fork_standard_policy(
+    body: ForkRequest,
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+) -> ForkResponse:
+    """Create a customer overlay by snapshotting a standard library file.
+
+    The fork is exact at this point — overlay content == upstream
+    content. The customer edits via a future PATCH endpoint; until
+    then, GET /upstream-diff returns an empty diff. parent_standard_ref
+    + parent_standard_version stamp the upstream baseline so drift
+    detection (PR 11+) can flag when the library moves ahead.
+    """
+    try:
+        meta, rego_text = std_get_file(body.standard_library_path)
+    except LibraryNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except FileNotInLibrary as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    s = get_settings()
+    target_system = _infer_target_system(body.standard_library_path)
+    bundle_store = get_bundle_store()
+    fork_sha = hashlib.sha256(rego_text.encode("utf-8")).hexdigest()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            policy_row = await conn.fetchrow(
+                """
+                INSERT INTO customer_policies
+                    (tenant_id, name, framework_bucket, policy_source,
+                     parent_standard_ref, parent_standard_version,
+                     created_by)
+                VALUES ($1, $2, $3, 'forked_overlay', $4, $5, $6)
+                RETURNING id
+                """,
+                tenant_user["tenant_id"],
+                body.name,
+                body.framework_bucket,
+                body.standard_library_path,
+                s.standard_library_version,
+                tenant_user["tenant_user_id"],
+            )
+
+            storage_key, _artifact_id = await bundle_store.put_rego(
+                tenant_id=tenant_user["tenant_id"],
+                uploaded_by_user_id=tenant_user["tenant_user_id"],
+                filename=f"fork__{body.standard_library_path.replace('/', '__')}",
+                rego_text=rego_text,
+                conn=conn,
+            )
+
+            target_row = await conn.fetchrow(
+                """
+                INSERT INTO customer_policy_targets
+                    (customer_policy_id, target_system, rego_storage_key,
+                     rego_content_sha256, generation_method, review_status)
+                VALUES ($1, $2, $3, $4, 'customer_authored', 'pending')
+                RETURNING id
+                """,
+                policy_row["id"],
+                target_system,
+                storage_key,
+                fork_sha,
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO policy_audit_log
+                    (tenant_id, tenant_user_id, customer_policy_id,
+                     action, details)
+                VALUES ($1, $2, $3, 'forked',
+                        jsonb_build_object(
+                            'parent_standard_ref', $4::text,
+                            'parent_standard_version', $5::text,
+                            'fork_sha256', $6::text,
+                            'target_system', $7::text))
+                """,
+                tenant_user["tenant_id"],
+                tenant_user["tenant_user_id"],
+                policy_row["id"],
+                body.standard_library_path,
+                s.standard_library_version,
+                fork_sha,
+                target_system,
+            )
+
+    return ForkResponse(
+        customer_policy_id=policy_row["id"],
+        customer_policy_target_id=target_row["id"],
+        parent_standard_ref=body.standard_library_path,
+        parent_standard_version=s.standard_library_version,
+        target_system=target_system,
+    )
+
+
+@router.get(
+    "/{policy_id}/upstream-diff",
+    response_model=UpstreamDiff,
+)
+async def get_upstream_diff(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    policy_id: UUID,
+) -> UpstreamDiff:
+    """Return a unified diff between the customer's current overlay
+    and the current standard library content of the file they forked.
+
+    If upstream hasn't moved since the fork, `upstream_changed_since_fork`
+    is false and the diff reflects only the customer's edits.
+    """
+    policy = await pool.fetchrow(
+        """
+        SELECT cp.id, cp.policy_source,
+               cp.parent_standard_ref,
+               cp.parent_standard_version,
+               cpt.rego_storage_key,
+               cpt.rego_content_sha256
+          FROM customer_policies cp
+          LEFT JOIN LATERAL (
+            SELECT rego_storage_key, rego_content_sha256
+              FROM customer_policy_targets
+             WHERE customer_policy_id = cp.id
+             ORDER BY created_at DESC
+             LIMIT 1
+          ) cpt ON true
+         WHERE cp.id = $1 AND cp.tenant_id = $2
+        """,
+        policy_id,
+        tenant_user["tenant_id"],
+    )
+    if policy is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    if policy["policy_source"] != "forked_overlay":
+        raise HTTPException(
+            status_code=409,
+            detail=f"upstream-diff only applies to forked_overlay "
+            f"policies; this is {policy['policy_source']}",
+        )
+    if not policy["parent_standard_ref"]:
+        raise HTTPException(status_code=500, detail="forked policy missing parent_standard_ref")
+
+    # Current upstream
+    try:
+        upstream_meta, upstream_text = std_get_file(policy["parent_standard_ref"])
+    except LibraryNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except FileNotInLibrary as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"upstream file gone from current library: {exc!s}",
+        ) from exc
+
+    # Customer overlay
+    key = policy["rego_storage_key"]
+    if not key or not key.startswith("pgrego:"):
+        raise HTTPException(status_code=500, detail="overlay missing in pg store")
+    artifact_id = key.split(":", 1)[1]
+    overlay_row = await pool.fetchrow(
+        "SELECT extracted_text FROM policy_uploads WHERE id = $1::uuid",
+        artifact_id,
+    )
+    if overlay_row is None:
+        raise HTTPException(status_code=500, detail="overlay row missing")
+    overlay_text = overlay_row["extracted_text"]
+    overlay_sha = hashlib.sha256(overlay_text.encode("utf-8")).hexdigest()
+
+    diff_lines = difflib.unified_diff(
+        upstream_text.splitlines(keepends=True),
+        overlay_text.splitlines(keepends=True),
+        fromfile=f"upstream/{policy['parent_standard_ref']}",
+        tofile=f"overlay/{policy['parent_standard_ref']}",
+        n=3,
+    )
+
+    s = get_settings()
+
+    return UpstreamDiff(
+        customer_policy_id=policy["id"],
+        parent_standard_ref=policy["parent_standard_ref"],
+        parent_standard_version=policy["parent_standard_version"],
+        current_upstream_sha256=upstream_meta.sha256,
+        fork_sha256=policy["rego_content_sha256"],
+        overlay_sha256=overlay_sha,
+        upstream_changed_since_fork=(
+            policy["parent_standard_version"] != s.standard_library_version
+        ),
+        unified_diff="".join(diff_lines),
     )

@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     bundle_signing_key_id: str = "portal-mvp-2026-06"  # rotated in operator playbook
     opa_build_timeout_seconds: int = 60
 
+    # Path B — standard library fork-and-tweak (PR 10)
+    standard_library_path: str = "/standard-library"
+    # Frozen at portal container build time (git short SHA of the
+    # rego_policy_libraries pin). Used as parent_standard_version
+    # when a customer forks a file so upstream-diff can identify
+    # which baseline they branched from.
+    standard_library_version: str = "unset"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
