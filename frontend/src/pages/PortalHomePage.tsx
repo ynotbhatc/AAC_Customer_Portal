@@ -196,6 +196,13 @@ export default function PortalHomePage() {
             >
               Browse standard library
             </button>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => navigate("/portal/bundles")}
+            >
+              Bundles
+            </button>
             {me && me.mfa_required && !me.mfa_verified ? (
               <span className="text-xs text-amber-700">
                 MFA verification required for upload + fork.
