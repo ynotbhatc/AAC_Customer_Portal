@@ -1,0 +1,54 @@
+# Customer policy — audit log retention (Linux)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+# Effective:     {{ effective_date | default('') }}
+#
+# auditd controls log retention via /etc/audit/auditd.conf:
+#   max_log_file_action = ROTATE  (rotate, not overwrite)
+#   num_logs            = N       (how many rotated files to keep)
+#   max_log_file        = MB      (size threshold for rotation)
+#
+# Total retention floor (days) is checked by combining num_logs +
+# typical write rate; this template enforces num_logs >= retention_days
+# as a conservative proxy. The AAC fact collector also reports
+# `auditd_retention_days_estimated` when it can compute it.
+
+package customer.{{ tenant_slug }}.audit_log_retention.linux
+
+import rego.v1
+
+default compliant := false
+
+{%- if retention_days is defined %}
+
+violations contains "auditd configured to OVERWRITE old logs instead of rotating" if {
+    action := upper(input.auditd_conf.max_log_file_action)
+    action != "ROTATE"
+    action != "KEEP_LOGS"
+}
+
+violations contains msg if {
+    actual := to_number(input.auditd_conf.num_logs)
+    actual < {{ retention_days }}
+    msg := sprintf("auditd num_logs=%d (recommended >= retention_days={{ retention_days }})", [actual])
+}
+
+violations contains msg if {
+    estimated := to_number(input.auditd_retention_days_estimated)
+    estimated < {{ retention_days }}
+    msg := sprintf("auditd estimated retention=%d days (policy >= {{ retention_days }})", [estimated])
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "audit_log_retention",
+    "target": "linux",
+    "compliant": compliant,
+    "violations": violations,
+}

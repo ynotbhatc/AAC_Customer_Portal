@@ -1,0 +1,63 @@
+# Customer policy — session timeout (Cisco IOS / Juniper)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# Cisco IOS:   `exec-timeout <min> <sec>` under line vty / line con
+# Juniper:     `set system login idle-timeout <min>`
+#
+# Expects input.running_config_lines as an array of strings.
+
+package customer.{{ tenant_slug }}.session_timeout.network_device
+
+import rego.v1
+
+default compliant := false
+
+{%- if idle_timeout_minutes is defined %}
+
+# Cisco IOS exec-timeout: `exec-timeout <minutes> <seconds>` indented
+# under a `line vty 0 4` block. We accept it on any line because
+# fact collection should pre-flatten config sections.
+has_cisco_timeout if {
+    some line in input.running_config_lines
+    parts := regex.find_all_string_submatch_n(`^\s*exec-timeout (\d+) \d+`, line, 1)
+    count(parts) > 0
+    minutes := to_number(parts[0][1])
+    minutes > 0
+    minutes <= {{ idle_timeout_minutes }}
+}
+
+# Juniper idle-timeout (value is in minutes).
+has_juniper_timeout if {
+    some line in input.running_config_lines
+    parts := regex.find_all_string_submatch_n(`^set system login idle-timeout (\d+)`, line, 1)
+    count(parts) > 0
+    minutes := to_number(parts[0][1])
+    minutes > 0
+    minutes <= {{ idle_timeout_minutes }}
+}
+
+violations contains sprintf("device does not enforce idle session timeout <= {{ idle_timeout_minutes }} minutes", []) if {
+    not has_cisco_timeout
+    not has_juniper_timeout
+}
+
+# Reject "exec-timeout 0 0" (never times out).
+violations contains "Cisco exec-timeout 0 0 disables idle logout" if {
+    some line in input.running_config_lines
+    regex.match(`^\s*exec-timeout 0 0`, line)
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "session_timeout",
+    "target": "network_device",
+    "compliant": compliant,
+    "violations": violations,
+}

@@ -1,0 +1,54 @@
+# Customer policy — session timeout (Linux)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+# Effective:     {{ effective_date | default('') }}
+#
+# Two ways Linux idles users out: shell-level TMOUT (set in
+# /etc/profile.d/) and sshd ClientAliveInterval × ClientAliveCountMax.
+# Both are scraped by the AAC fact collection pipeline.
+
+package customer.{{ tenant_slug }}.session_timeout.linux
+
+import rego.v1
+
+default compliant := false
+
+{%- if idle_timeout_minutes is defined %}
+
+# TMOUT (shell-level idle exit) — value in seconds; we check it's set,
+# non-zero, and at or below the policy's max.
+violations contains msg if {
+    actual := to_number(input.shell.tmout_seconds)
+    actual == 0
+    msg := "TMOUT is not set or is 0 (no shell idle timeout)"
+}
+
+violations contains msg if {
+    actual := to_number(input.shell.tmout_seconds)
+    actual > 0
+    actual > ({{ idle_timeout_minutes }} * 60)
+    msg := sprintf("TMOUT=%ds exceeds policy {{ idle_timeout_minutes }} minutes", [actual])
+}
+
+# sshd: server kicks idle clients after (interval × count_max) seconds.
+violations contains msg if {
+    interval := to_number(input.sshd.client_alive_interval)
+    count_max := to_number(input.sshd.client_alive_count_max)
+    total_seconds := interval * count_max
+    total_seconds > ({{ idle_timeout_minutes }} * 60)
+    msg := sprintf("sshd idle timeout %ds exceeds policy {{ idle_timeout_minutes }} minutes", [total_seconds])
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "session_timeout",
+    "target": "linux",
+    "compliant": compliant,
+    "violations": violations,
+}

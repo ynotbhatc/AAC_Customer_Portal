@@ -1,0 +1,50 @@
+# Customer policy — audit log retention (Kubernetes)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# Kubernetes audit logs ARE the kube-apiserver's --audit-log-* flags.
+# Retention is controlled by:
+#   --audit-log-maxage   (days)   — file age before deletion
+#   --audit-log-maxbackup (count) — number of rotated files
+#   --audit-log-maxsize  (MB)     — size threshold for rotation
+#
+# Expects input.api_server.audit_log shaped like the openshift API
+# server config dump.
+
+package customer.{{ tenant_slug }}.audit_log_retention.kubernetes
+
+import rego.v1
+
+default compliant := false
+
+{%- if retention_days is defined %}
+
+violations contains msg if {
+    actual := to_number(input.api_server.audit_log.maxage_days)
+    actual < {{ retention_days }}
+    msg := sprintf("--audit-log-maxage=%d (policy >= {{ retention_days }})", [actual])
+}
+
+violations contains "audit log retention not configured (--audit-log-maxage missing)" if {
+    not input.api_server.audit_log.maxage_days
+}
+
+# Audit policy file must exist — without one, nothing is logged regardless
+# of retention.
+violations contains "kube-apiserver --audit-policy-file not set" if {
+    not input.api_server.audit_policy_file
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "audit_log_retention",
+    "target": "kubernetes",
+    "compliant": compliant,
+    "violations": violations,
+}

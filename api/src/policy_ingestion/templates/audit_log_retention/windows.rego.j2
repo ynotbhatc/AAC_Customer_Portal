@@ -1,0 +1,47 @@
+# Customer policy — audit log retention (Windows Server)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# Windows Security event log retention is controlled by:
+#   * MaxSize (bytes) — how big the log can grow
+#   * Retention policy:
+#       0 = Overwrite events as needed (newest events) — BAD for compliance
+#       1 = Overwrite events older than N days
+#       0xFFFFFFFF = Do not overwrite, archive manually — BEST
+#
+# Expects input.event_log.Security with these fields.
+
+package customer.{{ tenant_slug }}.audit_log_retention.windows
+
+import rego.v1
+
+default compliant := false
+
+{%- if retention_days is defined %}
+
+violations contains "Security log set to overwrite events as needed (retention disabled)" if {
+    to_number(input.event_log.Security.retention) == 0
+}
+
+violations contains msg if {
+    retention_seconds := to_number(input.event_log.Security.retention)
+    retention_seconds > 0
+    retention_seconds != 4294967295   # 0xFFFFFFFF = manual archive
+    retention_days := retention_seconds / 86400
+    retention_days < {{ retention_days }}
+    msg := sprintf("Security log retention=%d days (policy >= {{ retention_days }})", [retention_days])
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "audit_log_retention",
+    "target": "windows",
+    "compliant": compliant,
+    "violations": violations,
+}

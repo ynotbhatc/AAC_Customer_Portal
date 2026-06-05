@@ -1,0 +1,42 @@
+# Customer policy — session timeout (Kubernetes)
+# Generated from prose policy via AAC Customer Portal — DO NOT EDIT BY HAND
+# Source policy: {{ policy_name }}
+# Tenant:        {{ tenant_id }}
+#
+# In Kubernetes "session" maps to API-server-issued tokens (ServiceAccount
+# tokens with --service-account-max-token-expiration, or OIDC kubectl
+# sessions with --oidc-issuer-* + token TTLs). We check the kube-apiserver
+# config exposes these as facts.
+
+package customer.{{ tenant_slug }}.session_timeout.kubernetes
+
+import rego.v1
+
+default compliant := false
+
+{%- if idle_timeout_minutes is defined %}
+
+violations contains msg if {
+    raw := input.api_server.service_account_max_token_expiration_seconds
+    actual := to_number(raw)
+    actual > ({{ idle_timeout_minutes }} * 60)
+    msg := sprintf("service-account-max-token-expiration=%ds exceeds policy {{ idle_timeout_minutes }} minutes", [actual])
+}
+
+violations contains msg if {
+    not input.api_server.service_account_max_token_expiration_seconds
+    msg := "service-account-max-token-expiration not configured"
+}
+{%- endif %}
+
+compliant if {
+    count(violations) == 0
+}
+
+compliance_report := {
+    "policy": "{{ policy_name }}",
+    "control": "session_timeout",
+    "target": "kubernetes",
+    "compliant": compliant,
+    "violations": violations,
+}
