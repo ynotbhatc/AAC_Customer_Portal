@@ -13,7 +13,7 @@ from typing import Annotated, Any
 
 import asyncpg
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ..core.passwords import (
     PasswordTooWeak,
@@ -48,7 +48,7 @@ async def me(
     )
 
 
-@router.post("/set-password", status_code=204)
+@router.post("/set-password", status_code=204, response_class=Response, response_model=None)
 async def set_password(
     body: SetPasswordRequest,
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],

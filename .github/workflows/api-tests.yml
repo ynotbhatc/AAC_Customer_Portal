@@ -37,5 +37,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Run pytest
-        run: pytest -v
+      # Rootless podman is preinstalled on ubuntu-latest GitHub Actions
+      # runners (24.04). Start the systemd user socket so testcontainers
+      # can talk to it via DOCKER_HOST without falling back to a docker
+      # daemon. Per the AAC stack convention we ship podman, never docker.
+      - name: Enable rootless podman socket
+        run: |
+          systemctl --user enable --now podman.socket || \
+            { sudo apt-get update && sudo apt-get install -y podman && \
+              systemctl --user enable --now podman.socket; }
+          echo "DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock" >> "$GITHUB_ENV"
+          echo "TESTCONTAINERS_RYUK_DISABLED=true" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        run: pytest -v -m "not integration"
+
+      - name: Run integration tests
+        run: pytest -v -m integration

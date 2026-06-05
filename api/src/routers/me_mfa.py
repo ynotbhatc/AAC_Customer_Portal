@@ -32,7 +32,7 @@ from uuid import UUID
 
 import asyncpg
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ..core.portal_db import get_portal_pool
 from ..core.sessions import require_tenant_user
@@ -181,7 +181,7 @@ async def totp_confirm(
     return BackupCodesResponse(backup_codes=backup_codes)
 
 
-@router.post("/factors/{factor_id}/revoke", status_code=204)
+@router.post("/factors/{factor_id}/revoke", status_code=204, response_class=Response, response_model=None)
 async def revoke_factor(
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],

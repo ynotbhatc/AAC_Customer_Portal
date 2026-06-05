@@ -20,3 +20,15 @@ if _API_ROOT not in sys.path:
 os.environ.setdefault("PG_PASSWORD", "test")
 os.environ.setdefault("PORTAL_PG_PASSWORD", "test")
 os.environ.setdefault("PORTAL_ADMIN_TOKEN", "test-admin-token")
+
+# Re-export the DB integration fixtures so any test file that needs a
+# real PostgreSQL pool can `def test_x(pg_pool):` directly. The
+# `pg_container` session fixture is lazy — it only spawns the
+# container when a test actually requests pg_pool, so unit tests
+# pay zero start-up cost.
+from .db_fixtures import (  # noqa: E402,F401
+    pg_container,
+    pg_dsn,
+    pg_pool,
+    pg_pool_initialized,
+)

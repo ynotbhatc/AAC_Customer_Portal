@@ -23,7 +23,7 @@ from uuid import UUID
 
 import asyncpg
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..core.config import get_settings
 from ..core.passwords import (
@@ -116,7 +116,7 @@ _DUMMY_HASH = "$2b$12$YgjFp9TZAJTAOaKfDB9q6e8.dWWlmsiTzczWPpDBLwTZIWmS6jepi"
 
 
 # ── password reset (confirm) ──────────────────────────────────────────
-@router.post("/password-reset/confirm", status_code=204)
+@router.post("/password-reset/confirm", status_code=204, response_class=Response, response_model=None)
 async def password_reset_confirm(
     body: PasswordResetConfirm,
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
@@ -177,7 +177,7 @@ async def password_reset_confirm(
 
 
 # ── login-time MFA verification ───────────────────────────────────────
-@router.post("/totp/verify", status_code=204)
+@router.post("/totp/verify", status_code=204, response_class=Response, response_model=None)
 async def totp_verify(
     body: TotpVerifyRequest,
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],

@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 import asyncpg
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field
 
 from ..core.portal_db import get_portal_pool
@@ -195,7 +195,7 @@ async def _require_match(
         raise HTTPException(status_code=404, detail="match not found for this tenant")
 
 
-@router.post("/tenants/{tenant_id}/cves/{cve_id}/ack", status_code=204)
+@router.post("/tenants/{tenant_id}/cves/{cve_id}/ack", status_code=204, response_class=Response, response_model=None)
 async def acknowledge_cve(
     tenant_id: Annotated[str, Path()],
     cve_id: Annotated[str, Path()],
@@ -213,7 +213,7 @@ async def acknowledge_cve(
     )
 
 
-@router.post("/tenants/{tenant_id}/cves/{cve_id}/suppress", status_code=204)
+@router.post("/tenants/{tenant_id}/cves/{cve_id}/suppress", status_code=204, response_class=Response, response_model=None)
 async def suppress_cve(
     tenant_id: Annotated[str, Path()],
     cve_id: Annotated[str, Path()],

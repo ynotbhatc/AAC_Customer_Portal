@@ -9,6 +9,9 @@ filterwarnings = [
     "ignore::DeprecationWarning:pydantic",
 ]
 addopts = "-ra --strict-markers"
+markers = [
+    "integration: tests requiring a real PostgreSQL container (auto-skipped if Docker isn't available)",
+]
 
 [tool.pytest_env]
 # Settings used by the pure-function tests. core/config.py reads from

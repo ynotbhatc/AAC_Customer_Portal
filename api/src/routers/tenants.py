@@ -13,7 +13,7 @@ from typing import Annotated
 
 import asyncpg
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Response
 
 from ..core.auth import require_admin
 from ..core.portal_db import get_portal_pool
@@ -136,7 +136,7 @@ async def update_tenant(
     return dict(row)
 
 
-@router.delete("/{tenant_id}", status_code=204)
+@router.delete("/{tenant_id}", status_code=204, response_class=Response, response_model=None)
 async def soft_delete_tenant(
     tenant_id: Annotated[str, Path()],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
@@ -217,7 +217,7 @@ async def list_tokens(
     return [dict(r) for r in rows]
 
 
-@router.post("/{tenant_id}/tokens/{token_id}/revoke", status_code=204)
+@router.post("/{tenant_id}/tokens/{token_id}/revoke", status_code=204, response_class=Response, response_model=None)
 async def revoke_token(
     tenant_id: Annotated[str, Path()],
     token_id: Annotated[str, Path()],
