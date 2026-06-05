@@ -460,6 +460,7 @@ import type {
 } from "../types/policy";
 import type {
   BuildBundleResponse,
+  BundleHistoryEntry,
   BundleManifest,
   PublishResponse,
 } from "../types/bundle";
@@ -574,6 +575,17 @@ export const userBundleBuild = (): Promise<BuildBundleResponse> =>
 export const userBundleCurrentManifest = (): Promise<BundleManifest> =>
   userApi
     .get<BundleManifest>("/portal/v1/me/bundles/current/manifest")
+    .then((r) => r.data);
+
+// Cursor-paginated history. Pass the oldest built_at from the prior
+// page as before_built_at to walk back through time. Server caps
+// limit at 200.
+export const userBundleHistory = (opts?: {
+  limit?: number;
+  before_built_at?: string;
+}): Promise<BundleHistoryEntry[]> =>
+  userApi
+    .get<BundleHistoryEntry[]>("/portal/v1/me/bundles", { params: opts })
     .then((r) => r.data);
 
 // ── Republish (PR 22 of Piece 46) ────────────────────────────────────

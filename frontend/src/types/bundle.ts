@@ -32,6 +32,22 @@ export interface ExcludedTargetEntry {
   reason: string;
 }
 
+// Lean row for the history list — heavy fields (manifest, bytes,
+// envelope, customer_policy_ids) are intentionally not included.
+// The full manifest is fetched per-bundle via /current/manifest when
+// the customer is looking at the current bundle in detail.
+export interface BundleHistoryEntry {
+  bundle_id: string;
+  bundle_sha256: string;
+  bundle_byte_size: number;
+  target_count: number;
+  excluded_target_count: number;
+  built_at: string;
+  signing_key_id: string;
+  // null when the builder's tenant_users row was deleted (FK SET NULL).
+  built_by_email: string | null;
+}
+
 export interface BundleManifest {
   bundle_id: string;
   tenant_id: string;

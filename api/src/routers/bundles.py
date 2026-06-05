@@ -23,7 +23,9 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Path, Response
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 
 from ..core.bundle_builder import build_tenant_bundle
 from ..core.bundle_signer import (
@@ -38,6 +40,7 @@ from ..core.sessions import require_tenant_user_mfa
 from ..core.tenant_auth import BUNDLE_PULL_SCOPE, require_tenant_with_scope
 from ..models.policy_bundle import (
     BuildBundleResponse,
+    BundleHistoryEntry,
     BundleManifest,
     SigningKeyInfo,
 )
@@ -287,6 +290,69 @@ async def get_current_manifest(
         signing_key_id=row["signing_key_id"],
         manifest=row["manifest"],
     )
+
+
+@user_router.get("", response_model=list[BundleHistoryEntry])
+async def list_bundle_history(
+    tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    limit: int = Query(50, ge=1, le=200),
+    before_built_at: datetime | None = Query(
+        None,
+        description="Cursor — return entries built before this timestamp. "
+        "Use the oldest built_at from the prior page.",
+    ),
+) -> list[dict[str, Any]]:
+    """Reverse-chronological history of bundles for the tenant.
+
+    Lean payload — `bundle_bytes`, `signed_envelope_bytes`, and the
+    full `manifest` jsonb are deliberately not returned here. A list
+    page of dozens of entries would otherwise be tens of megabytes
+    for no UI benefit. The per-bundle manifest detail surface is a
+    later PR; this endpoint is the summary view.
+
+    Pagination is cursor-based on `built_at`. Postgres timestamps are
+    microsecond-precision and tenant bundle builds are rare enough
+    that collisions are non-existent in practice; if one ever
+    occurred the duplicate would appear on two pages — acceptable
+    trade-off for cursor simplicity over a compound (built_at, id)
+    key.
+    """
+    if before_built_at is None:
+        rows = await pool.fetch(
+            """
+            SELECT pb.id AS bundle_id, pb.bundle_sha256,
+                   pb.bundle_byte_size, pb.target_count,
+                   pb.excluded_target_count, pb.built_at,
+                   pb.signing_key_id, tu.email AS built_by_email
+              FROM policy_bundles pb
+              LEFT JOIN tenant_users tu ON tu.id = pb.built_by_user_id
+             WHERE pb.tenant_id = $1
+             ORDER BY pb.built_at DESC
+             LIMIT $2
+            """,
+            tenant_user["tenant_id"],
+            limit,
+        )
+    else:
+        rows = await pool.fetch(
+            """
+            SELECT pb.id AS bundle_id, pb.bundle_sha256,
+                   pb.bundle_byte_size, pb.target_count,
+                   pb.excluded_target_count, pb.built_at,
+                   pb.signing_key_id, tu.email AS built_by_email
+              FROM policy_bundles pb
+              LEFT JOIN tenant_users tu ON tu.id = pb.built_by_user_id
+             WHERE pb.tenant_id = $1
+               AND pb.built_at < $2
+             ORDER BY pb.built_at DESC
+             LIMIT $3
+            """,
+            tenant_user["tenant_id"],
+            before_built_at,
+            limit,
+        )
+    return [dict(r) for r in rows]
 
 
 # ── Public signing-key advertisement ──────────────────────────────────

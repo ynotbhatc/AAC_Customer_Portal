@@ -51,3 +51,22 @@ class BuildBundleResponse(BaseModel):
     customer_policy_ids: list[UUID]
     built_at: datetime
     signing_key_id: str
+
+
+class BundleHistoryEntry(BaseModel):
+    """Lean row for the bundle history list endpoint.
+
+    Deliberately omits the heavy fields — `bundle_bytes`,
+    `signed_envelope_bytes`, and the full `manifest` jsonb — so a
+    page of dozens of entries stays small. The full manifest is
+    fetched per-bundle on demand if/when we add a detail surface.
+    """
+    bundle_id: UUID
+    bundle_sha256: str
+    bundle_byte_size: int
+    target_count: int
+    excluded_target_count: int
+    built_at: datetime
+    signing_key_id: str
+    # NULL when the builder's tenant_users row was deleted (FK is SET NULL).
+    built_by_email: str | None = None
