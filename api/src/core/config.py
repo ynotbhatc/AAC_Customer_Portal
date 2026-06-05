@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 15 * 1024 * 1024  # 15 MiB
     parser_timeout_seconds: int = 30
 
+    # LLM IR extraction (Phase 2 — Path A)
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-6"
+    ir_extraction_max_input_chars: int = 50_000   # 413 above this
+    ir_extraction_max_tokens: int = 4096
+    ir_extraction_timeout_seconds: int = 90
+    ir_schema_version: str = "v1"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

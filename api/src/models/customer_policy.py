@@ -49,3 +49,19 @@ class CustomerPolicyDetail(CustomerPolicySummary):
     parent_standard_ref: str | None = None
     parent_standard_version: str | None = None
     ir_json: dict | None = None
+
+
+class IRExtractionResponse(BaseModel):
+    """Returned by POST /portal/v1/me/policies/{id}/extract-ir.
+
+    Echoes the IR document the endpoint just wrote into the row, plus
+    a count of how many controls landed inside the closed enum (vs
+    those marked null) — useful for the review UI's "8/12 controls
+    matched the library, 4 are free-form" badge.
+    """
+    customer_policy_id: UUID
+    schema_version: str
+    control_count: int
+    controls_matched_library: int
+    controls_freeform: int
+    ir_json: dict
