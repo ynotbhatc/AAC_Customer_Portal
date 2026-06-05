@@ -145,6 +145,12 @@ const AVAILABLE_SCOPES = [
     description:
       "Bridge pulls the signed OPA policy bundle and verifies the envelope.",
   },
+  {
+    name: "baseline_push",
+    label: "Baseline push",
+    description:
+      "Bridge POSTs OPA evaluation results as point-in-time baseline snapshots.",
+  },
 ] as const;
 
 const DEFAULT_SCOPES = AVAILABLE_SCOPES.map((s) => s.name);

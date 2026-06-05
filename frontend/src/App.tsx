@@ -25,6 +25,8 @@ import PortalUpstreamDiffPage from "./pages/PortalUpstreamDiffPage";
 import PortalBundlesPage from "./pages/PortalBundlesPage";
 import PortalBundleDetailPage from "./pages/PortalBundleDetailPage";
 import PortalPolicyAuditLogPage from "./pages/PortalPolicyAuditLogPage";
+import PortalBaselinesPage from "./pages/PortalBaselinesPage";
+import PortalBaselineDetailPage from "./pages/PortalBaselineDetailPage";
 import { getAdminToken, getUserSession } from "./lib/auth";
 
 const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
@@ -149,6 +151,22 @@ export default function App() {
         element={
           <RequirePortalUser>
             <PortalPolicyAuditLogPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/baselines"
+        element={
+          <RequirePortalUser>
+            <PortalBaselinesPage />
+          </RequirePortalUser>
+        }
+      />
+      <Route
+        path="/portal/baselines/:id"
+        element={
+          <RequirePortalUser>
+            <PortalBaselineDetailPage />
           </RequirePortalUser>
         }
       />

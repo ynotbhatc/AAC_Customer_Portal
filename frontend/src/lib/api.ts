@@ -465,6 +465,11 @@ import type {
   PublishResponse,
 } from "../types/bundle";
 import type { AuditLogEntry } from "../types/audit";
+import type {
+  BaselineIngestRequest,
+  BaselineSnapshotDetail,
+  BaselineSnapshotSummary,
+} from "../types/baseline";
 
 export const userPoliciesList = (params?: {
   framework_bucket?: string;
@@ -614,6 +619,34 @@ export const userPolicyRepublish = (
       `/portal/v1/me/policies/${policyId}/republish`,
       body
     )
+    .then((r) => r.data);
+
+// ── Baselines (Piece 50) ─────────────────────────────────────────────
+
+export const userBaselinesList = (opts?: {
+  limit?: number;
+  before_captured_at?: string;
+  before_id?: string;
+}): Promise<BaselineSnapshotSummary[]> =>
+  userApi
+    .get<BaselineSnapshotSummary[]>("/portal/v1/me/baselines", { params: opts })
+    .then((r) => r.data);
+
+export const userBaselineDetail = (
+  id: string
+): Promise<BaselineSnapshotDetail> =>
+  userApi
+    .get<BaselineSnapshotDetail>(`/portal/v1/me/baselines/${id}`)
+    .then((r) => r.data);
+
+// Manual import path — primarily for backfills and testing. The
+// bridge-push endpoint lives on the M2M surface and isn't called
+// from the frontend.
+export const userBaselineManualImport = (
+  body: BaselineIngestRequest
+): Promise<BaselineSnapshotDetail> =>
+  userApi
+    .post<BaselineSnapshotDetail>("/portal/v1/me/baselines", body)
     .then((r) => r.data);
 
 // ── Audit log (PR 21 of Piece 46) ────────────────────────────────────
