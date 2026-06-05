@@ -70,12 +70,13 @@ export default function PortalBundlesPage() {
 
   const loadOlderHistory = () => {
     if (history.length === 0) return;
-    const oldest = history[history.length - 1].built_at;
+    const oldest = history[history.length - 1];
     setHistoryLoading(true);
     setErr(null);
     userBundleHistory({
       limit: HISTORY_PAGE_SIZE,
-      before_built_at: oldest,
+      before_built_at: oldest.built_at,
+      before_id: oldest.bundle_id,
     })
       .then((rows) => {
         setHistory((prev) => [...prev, ...rows]);
@@ -274,9 +275,13 @@ export default function PortalBundlesPage() {
                 </tr>
               </thead>
               <tbody>
-                {history.map((h, idx) => {
+                {history.map((h) => {
+                  // sha is unique per bundle row; the current bundle is
+                  // simply the one whose sha matches `manifest`. No
+                  // need to also check idx === 0 — that's redundant
+                  // and wrong-feeling if the user is mid-pagination.
                   const isCurrent =
-                    manifest?.bundle_sha256 === h.bundle_sha256 && idx === 0;
+                    manifest?.bundle_sha256 === h.bundle_sha256;
                   return (
                     <tr
                       key={h.bundle_id}

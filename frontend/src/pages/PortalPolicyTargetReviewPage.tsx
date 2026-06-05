@@ -98,13 +98,16 @@ export default function PortalPolicyTargetReviewPage() {
     setBusy("approve");
     setErr(null);
     try {
-      const updated = await userPolicyTargetApprove(policyId, targetId, {
+      await userPolicyTargetApprove(policyId, targetId, {
         reason: approveReason.trim() || null,
       });
-      // Approve returns a TargetSummary; merge into our TargetDetail.
-      setTarget((prev) =>
-        prev ? { ...prev, review_status: updated.review_status } : prev
-      );
+      // Re-fetch the full TargetDetail rather than spreading a
+      // TargetSummary into local state — if the server ever mutates
+      // additional fields on approve (e.g. last_reviewed_at), this
+      // keeps the UI accurate without re-coding when the model
+      // evolves.
+      const fresh = await userPolicyTargetDetail(policyId, targetId);
+      setTarget(fresh);
       setApproveReason("");
     } catch (e) {
       setErr(extractErr(e));
@@ -118,12 +121,11 @@ export default function PortalPolicyTargetReviewPage() {
     setBusy("reject");
     setErr(null);
     try {
-      const updated = await userPolicyTargetReject(policyId, targetId, {
+      await userPolicyTargetReject(policyId, targetId, {
         reason: rejectReason.trim(),
       });
-      setTarget((prev) =>
-        prev ? { ...prev, review_status: updated.review_status } : prev
-      );
+      const fresh = await userPolicyTargetDetail(policyId, targetId);
+      setTarget(fresh);
       setRejectReason("");
     } catch (e) {
       setErr(extractErr(e));

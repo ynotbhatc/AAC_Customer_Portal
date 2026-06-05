@@ -31,22 +31,34 @@ export default function PortalPolicyDetailPage() {
   const navigate = useNavigate();
   const { id = "" } = useParams<{ id: string }>();
   const [policy, setPolicy] = useState<CustomerPolicyDetail | null>(null);
-  const [targets, setTargets] = useState<TargetSummary[]>([]);
+  // Initialize to `null`, not `[]`, so the publish gate can distinguish
+  // "loading" from "loaded with zero targets" — without this we'd
+  // briefly show "0/0 approved" + the disabled-no-targets hint on
+  // every mount before the targets call resolves.
+  const [targets, setTargets] = useState<TargetSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<
     "ir" | "rego" | "publish" | "republish" | null
   >(null);
   const [republishVersion, setRepublishVersion] = useState("");
 
-  const loadAll = () => {
+  const loadPolicy = () => {
     setErr(null);
-    Promise.all([userPolicyDetail(id), userPolicyTargets(id)])
-      .then(([p, t]) => {
-        setPolicy(p);
-        setTargets(t);
-      })
+    return userPolicyDetail(id)
+      .then(setPolicy)
       .catch((e) => setErr(extractErr(e)));
   };
+
+  const loadTargets = () => {
+    return userPolicyTargets(id)
+      .then(setTargets)
+      .catch((e) => setErr(extractErr(e)));
+  };
+
+  // Initial load: fire both in parallel. Subsequent calls fire only
+  // what changed (e.g. publish only mutates policy.status; targets
+  // become frozen but their rows are unchanged).
+  const loadAll = () => Promise.all([loadPolicy(), loadTargets()]);
 
   useEffect(() => {
     if (id) loadAll();
@@ -92,7 +104,9 @@ export default function PortalPolicyDetailPage() {
     setErr(null);
     try {
       await userPolicyPublish(id);
-      loadAll();
+      // Publish only mutates policy.status and policy.published_at;
+      // targets are frozen but unchanged. Skip the targets refetch.
+      await loadPolicy();
     } catch (e) {
       setErr(extractErr(e));
     } finally {
@@ -251,7 +265,7 @@ export default function PortalPolicyDetailPage() {
               </p>
             </div>
             <div>
-              {targets.length > 0 ? (
+              {targets && targets.length > 0 ? (
                 <span className="text-sm text-slate-700">
                   {targets.length} target{targets.length === 1 ? "" : "s"}
                 </span>
@@ -271,7 +285,7 @@ export default function PortalPolicyDetailPage() {
             >
               {busy === "rego"
                 ? "Generating…"
-                : targets.length > 0
+                : targets && targets.length > 0
                 ? "Re-generate Rego"
                 : "Generate Rego"}
             </button>
@@ -284,7 +298,7 @@ export default function PortalPolicyDetailPage() {
         </section>
 
         {/* Targets table */}
-        {targets.length > 0 ? (
+        {targets && targets.length > 0 ? (
           <section className="card overflow-hidden">
             <h2 className="text-base font-semibold text-slate-900 px-6 pt-6 pb-2">
               Targets
@@ -358,9 +372,15 @@ export default function PortalPolicyDetailPage() {
                 Approved targets
               </div>
               <div className="text-slate-900 font-mono">
-                {targets.filter((t) => t.review_status === "approved").length}
-                {" / "}
-                {targets.length}
+                {targets === null ? (
+                  <span className="text-slate-400">…</span>
+                ) : (
+                  <>
+                    {targets.filter((t) => t.review_status === "approved").length}
+                    {" / "}
+                    {targets.length}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -402,7 +422,6 @@ export default function PortalPolicyDetailPage() {
                     className="text-sm border border-slate-300 rounded px-3 py-2 w-72"
                     value={republishVersion}
                     onChange={(e) => setRepublishVersion(e.target.value)}
-                    maxLength={64}
                     disabled={busy !== null}
                   />
                   <button
@@ -437,10 +456,18 @@ function PublishGate({
   disabled,
 }: {
   busy: boolean;
-  targets: TargetSummary[];
+  // Null while the targets list is in flight — distinguishing
+  // "loading" from "loaded with zero" keeps the button from flashing
+  // disabled before the data arrives.
+  targets: TargetSummary[] | null;
   onPublish: () => void;
   disabled: boolean;
 }) {
+  if (targets === null) {
+    return (
+      <p className="text-xs text-slate-500 italic">Checking targets…</p>
+    );
+  }
   const approvedCount = targets.filter(
     (t) => t.review_status === "approved"
   ).length;

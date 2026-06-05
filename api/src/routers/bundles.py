@@ -22,6 +22,15 @@ import json
 from typing import Annotated, Any
 from uuid import UUID
 
+
+def _ensure_json(value: Any) -> Any:
+    """Asyncpg returns jsonb as raw JSON text str unless a connection
+    codec is registered. Defend at the call site — matches the pattern
+    already used in policies.py for `ir_json`. Idempotent: if asyncpg
+    DOES return a dict/list, this is a no-op.
+    """
+    return json.loads(value) if isinstance(value, str) else value
+
 import asyncpg
 from datetime import datetime
 
@@ -285,10 +294,10 @@ async def get_current_manifest(
         target_count=row["target_count"],
         customer_policy_ids=row["customer_policy_ids"],
         excluded_target_count=row["excluded_target_count"],
-        excluded_targets_log=row["excluded_targets_log"],
+        excluded_targets_log=_ensure_json(row["excluded_targets_log"]),
         built_at=row["built_at"],
         signing_key_id=row["signing_key_id"],
-        manifest=row["manifest"],
+        manifest=_ensure_json(row["manifest"]),
     )
 
 
@@ -328,10 +337,10 @@ async def get_bundle_manifest_by_id(
         target_count=row["target_count"],
         customer_policy_ids=row["customer_policy_ids"],
         excluded_target_count=row["excluded_target_count"],
-        excluded_targets_log=row["excluded_targets_log"],
+        excluded_targets_log=_ensure_json(row["excluded_targets_log"]),
         built_at=row["built_at"],
         signing_key_id=row["signing_key_id"],
-        manifest=row["manifest"],
+        manifest=_ensure_json(row["manifest"]),
     )
 
 
@@ -342,8 +351,13 @@ async def list_bundle_history(
     limit: int = Query(50, ge=1, le=200),
     before_built_at: datetime | None = Query(
         None,
-        description="Cursor — return entries built before this timestamp. "
-        "Use the oldest built_at from the prior page.",
+        description="Cursor — pass with before_id (both or neither). "
+        "Returns entries strictly before this (built_at, id) pair.",
+    ),
+    before_id: UUID | None = Query(
+        None,
+        description="Tiebreaker for before_built_at. The bundle_id of "
+        "the oldest entry from the prior page.",
     ),
 ) -> list[dict[str, Any]]:
     """Reverse-chronological history of bundles for the tenant.
@@ -351,16 +365,25 @@ async def list_bundle_history(
     Lean payload — `bundle_bytes`, `signed_envelope_bytes`, and the
     full `manifest` jsonb are deliberately not returned here. A list
     page of dozens of entries would otherwise be tens of megabytes
-    for no UI benefit. The per-bundle manifest detail surface is a
-    later PR; this endpoint is the summary view.
+    for no UI benefit. Per-bundle manifest detail lives on
+    /me/bundles/{bundle_id}/manifest.
 
-    Pagination is cursor-based on `built_at`. Postgres timestamps are
-    microsecond-precision and tenant bundle builds are rare enough
-    that collisions are non-existent in practice; if one ever
-    occurred the duplicate would appear on two pages — acceptable
-    trade-off for cursor simplicity over a compound (built_at, id)
-    key.
+    Pagination is cursor-based on the compound `(built_at, id)` key
+    to be collision-safe. Postgres timestamptz is microsecond-
+    precision and bundle builds are rare, but two builds CAN land in
+    the same microsecond; without the id tiebreaker the duplicate
+    would appear on two pages. Result order is `built_at DESC,
+    id DESC` so the cursor is deterministic.
     """
+    if (before_built_at is None) != (before_id is None):
+        # Both or neither — the cursor is a pair, not two independent
+        # filters. Mixing them silently would let pagination drop or
+        # repeat rows depending on which one was omitted.
+        raise HTTPException(
+            status_code=400,
+            detail="before_built_at and before_id must be passed together",
+        )
+
     if before_built_at is None:
         rows = await pool.fetch(
             """
@@ -371,7 +394,7 @@ async def list_bundle_history(
               FROM policy_bundles pb
               LEFT JOIN tenant_users tu ON tu.id = pb.built_by_user_id
              WHERE pb.tenant_id = $1
-             ORDER BY pb.built_at DESC
+             ORDER BY pb.built_at DESC, pb.id DESC
              LIMIT $2
             """,
             tenant_user["tenant_id"],
@@ -387,12 +410,13 @@ async def list_bundle_history(
               FROM policy_bundles pb
               LEFT JOIN tenant_users tu ON tu.id = pb.built_by_user_id
              WHERE pb.tenant_id = $1
-               AND pb.built_at < $2
-             ORDER BY pb.built_at DESC
-             LIMIT $3
+               AND (pb.built_at, pb.id) < ($2, $3)
+             ORDER BY pb.built_at DESC, pb.id DESC
+             LIMIT $4
             """,
             tenant_user["tenant_id"],
             before_built_at,
+            before_id,
             limit,
         )
     return [dict(r) for r in rows]

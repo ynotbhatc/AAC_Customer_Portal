@@ -18,6 +18,7 @@ export default function PortalBundleDetailPage() {
   const [manifest, setManifest] = useState<BundleManifest | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [manifestExpanded, setManifestExpanded] = useState(false);
+  const [policiesExpanded, setPoliciesExpanded] = useState(false);
 
   useEffect(() => {
     if (!bundleId) return;
@@ -27,21 +28,11 @@ export default function PortalBundleDetailPage() {
       .catch((e) => setErr(extractErr(e)));
   }, [bundleId]);
 
-  if (err) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center text-sm text-red-600">
-        {err}
-      </div>
-    );
-  }
-  if (!manifest) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center text-sm text-slate-500">
-        Loading…
-      </div>
-    );
-  }
-
+  // Render the page chrome (back link, error banner, loading copy)
+  // even when the fetch errors or is still in flight — matches the
+  // pattern PortalBundlesPage / PortalPolicyDetailPage / Audit log
+  // use, so the user can always get back without a hostile
+  // full-screen error wall.
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="bg-white border-b border-slate-200">
@@ -53,15 +44,31 @@ export default function PortalBundleDetailPage() {
             ← Bundles
           </Link>
           <h1 className="text-base font-semibold text-slate-900 truncate">
-            Bundle{" "}
-            <code className="text-xs font-mono">
-              {manifest.bundle_sha256.slice(0, 12)}…
-            </code>
+            {manifest ? (
+              <>
+                Bundle{" "}
+                <code className="text-xs font-mono">
+                  {manifest.bundle_sha256.slice(0, 12)}…
+                </code>
+              </>
+            ) : (
+              "Bundle"
+            )}
           </h1>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+        {err ? (
+          <div className="card p-4 text-sm text-red-600">{err}</div>
+        ) : null}
+
+        {!manifest ? (
+          <section className="card p-6 text-sm text-slate-500">
+            {err ? null : "Loading…"}
+          </section>
+        ) : (
+        <>
         <section className="card p-6">
           <h2 className="text-base font-semibold text-slate-900 mb-4">
             Manifest
@@ -95,6 +102,29 @@ export default function PortalBundleDetailPage() {
               <span className="font-mono text-xs">
                 {manifest.customer_policy_ids.length} policies
               </span>
+              {manifest.customer_policy_ids.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setPoliciesExpanded((x) => !x)}
+                  className="ml-3 text-xs text-brand-600 hover:underline"
+                >
+                  {policiesExpanded ? "Hide" : "Show"}
+                </button>
+              ) : null}
+              {policiesExpanded ? (
+                <ul className="mt-2 space-y-1">
+                  {manifest.customer_policy_ids.map((pid) => (
+                    <li key={pid} className="text-xs">
+                      <Link
+                        to={`/portal/policies/${pid}`}
+                        className="font-mono text-brand-600 hover:underline break-all"
+                      >
+                        {pid}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </Field>
           </dl>
         </section>
@@ -150,6 +180,8 @@ export default function PortalBundleDetailPage() {
             </pre>
           ) : null}
         </section>
+        </>
+        )}
       </main>
     </div>
   );
