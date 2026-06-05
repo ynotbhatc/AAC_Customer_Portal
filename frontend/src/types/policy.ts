@@ -106,3 +106,17 @@ export interface TargetEditRequest {
 export interface TargetReviewAction {
   reason?: string | null;
 }
+
+export interface RepublishRequest {
+  // Optional override. Omit to let the server bump the patch
+  // component of the parent version automatically.
+  new_version_semver?: string | null;
+}
+
+export interface RepublishResponse {
+  new_customer_policy_id: string;
+  new_version_semver: string;
+  targets_copied: number;
+  parent_policy_id: string;
+  parent_version_semver: string;
+}
