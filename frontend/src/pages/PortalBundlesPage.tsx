@@ -280,10 +280,15 @@ export default function PortalBundlesPage() {
                   return (
                     <tr
                       key={h.bundle_id}
-                      className="border-t border-slate-100 align-top"
+                      className="border-t border-slate-100 align-top hover:bg-slate-50"
                     >
                       <td className="px-4 py-2 text-slate-700 whitespace-nowrap">
-                        {new Date(h.built_at).toLocaleString()}
+                        <Link
+                          to={`/portal/bundles/${h.bundle_id}`}
+                          className="text-brand-600 hover:underline"
+                        >
+                          {new Date(h.built_at).toLocaleString()}
+                        </Link>
                         {isCurrent ? (
                           <span className="ml-2 inline-block bg-emerald-100 text-emerald-800 text-[10px] font-medium px-1.5 py-0.5 rounded">
                             current

@@ -588,6 +588,16 @@ export const userBundleHistory = (opts?: {
     .get<BundleHistoryEntry[]>("/portal/v1/me/bundles", { params: opts })
     .then((r) => r.data);
 
+// Full manifest for an arbitrary historical bundle. Tenant-scoped on
+// the server — a foreign-tenant bundle ID 404s identically to a
+// non-existent one.
+export const userBundleManifestById = (
+  bundleId: string
+): Promise<BundleManifest> =>
+  userApi
+    .get<BundleManifest>(`/portal/v1/me/bundles/${bundleId}/manifest`)
+    .then((r) => r.data);
+
 // ── Republish (PR 22 of Piece 46) ────────────────────────────────────
 
 // Creates a draft successor to a published policy. Targets are copied
