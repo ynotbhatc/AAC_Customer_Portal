@@ -123,11 +123,38 @@ export default function TenantDetailPage() {
 }
 
 // ── Tokens ──────────────────────────────────────────────────────────
+
+// The full set of M2M scopes the bridge can use. A bridge typically
+// holds one token with all three for unified pulls, but the operator
+// CAN issue narrower tokens for separation of concerns (e.g. a
+// policy-bundle-only token shared with a downstream consumer).
+const AVAILABLE_SCOPES = [
+  {
+    name: "inventory_pull",
+    label: "Inventory pull",
+    description: "Bridge pulls the tenant's host inventory.",
+  },
+  {
+    name: "cve_feed",
+    label: "CVE feed",
+    description: "Bridge pulls the tenant's filtered CVE feed.",
+  },
+  {
+    name: "policy_bundle_pull",
+    label: "Policy bundle pull",
+    description:
+      "Bridge pulls the signed OPA policy bundle and verifies the envelope.",
+  },
+] as const;
+
+const DEFAULT_SCOPES = AVAILABLE_SCOPES.map((s) => s.name);
+
 function TokensTab({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [justCreated, setJustCreated] = useState<TokenCreated | null>(null);
   const [desc, setDesc] = useState("");
+  const [scopes, setScopes] = useState<string[]>([...DEFAULT_SCOPES]);
 
   const { data: tokens } = useQuery({
     queryKey: ["tokens", tenantId],
@@ -136,14 +163,21 @@ function TokensTab({ tenantId }: { tenantId: string }) {
 
   const create = useMutation({
     mutationFn: () =>
-      createToken(tenantId, { description: desc || null, scopes: ["inventory_pull", "cve_feed"] }),
+      createToken(tenantId, { description: desc || null, scopes }),
     onSuccess: (t) => {
       setJustCreated(t);
       setShowNew(false);
       setDesc("");
+      setScopes([...DEFAULT_SCOPES]);
       qc.invalidateQueries({ queryKey: ["tokens", tenantId] });
     },
   });
+
+  const toggleScope = (name: string) => {
+    setScopes((prev) =>
+      prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]
+    );
+  };
 
   const revoke = useMutation({
     mutationFn: (token_id: string) => revokeToken(tenantId, token_id, "revoked from operator UI"),
@@ -188,6 +222,43 @@ function TokensTab({ tenantId }: { tenantId: string }) {
               onChange={(e) => setDesc(e.target.value)}
             />
           </div>
+          <div>
+            <label className="label">Scopes</label>
+            <p className="text-xs text-slate-500 mb-2">
+              All three are checked by default — a primary bridge token
+              normally holds the full set. Untick to issue a narrower
+              token (e.g. policy-bundle only).
+            </p>
+            <div className="space-y-2">
+              {AVAILABLE_SCOPES.map((s) => (
+                <label key={s.name} className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={scopes.includes(s.name)}
+                    onChange={() => toggleScope(s.name)}
+                  />
+                  <span>
+                    <span className="text-sm font-medium text-slate-900">
+                      {s.label}
+                    </span>{" "}
+                    <code className="text-[11px] text-slate-500">
+                      {s.name}
+                    </code>
+                    <span className="block text-xs text-slate-500">
+                      {s.description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {scopes.length === 0 ? (
+              <p className="text-xs text-amber-700 mt-2">
+                A token with no scopes can authenticate but cannot pull
+                anything. Pick at least one.
+              </p>
+            ) : null}
+          </div>
           {create.error && (
             <div className="text-sm text-red-700">{extractErr(create.error)}</div>
           )}
@@ -198,7 +269,7 @@ function TokensTab({ tenantId }: { tenantId: string }) {
             <button
               className="btn-primary"
               onClick={() => create.mutate()}
-              disabled={create.isPending}
+              disabled={create.isPending || scopes.length === 0}
             >
               {create.isPending ? "Creating…" : "Create token"}
             </button>
