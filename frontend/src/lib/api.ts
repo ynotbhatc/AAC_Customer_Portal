@@ -456,6 +456,11 @@ import type {
   TargetSummary,
   UploadAccepted,
 } from "../types/policy";
+import type {
+  BuildBundleResponse,
+  BundleManifest,
+  PublishResponse,
+} from "../types/bundle";
 
 export const userPoliciesList = (params?: {
   framework_bucket?: string;
@@ -545,6 +550,27 @@ export const userPolicyTargetReject = (
       `/portal/v1/me/policies/${policyId}/targets/${targetId}/reject`,
       body
     )
+    .then((r) => r.data);
+
+// ── Publish + bundle (PR 19/20 of Piece 46) ──────────────────────────
+
+export const userPolicyPublish = (policyId: string): Promise<PublishResponse> =>
+  userApi
+    .post<PublishResponse>(`/portal/v1/me/policies/${policyId}/publish`)
+    .then((r) => r.data);
+
+export const userBundleBuild = (): Promise<BuildBundleResponse> =>
+  userApi
+    .post<BuildBundleResponse>("/portal/v1/me/bundles/build")
+    .then((r) => r.data);
+
+// 404 here is non-exceptional — it just means the tenant hasn't built
+// a bundle yet. Callers should catch and render an empty state; we
+// keep the axios-default behavior of rejecting on 404 so the
+// distinction is explicit at the call site.
+export const userBundleCurrentManifest = (): Promise<BundleManifest> =>
+  userApi
+    .get<BundleManifest>("/portal/v1/me/bundles/current/manifest")
     .then((r) => r.data);
 
 // ── Standard library + fork (Path B, PR 18) ──────────────────────────

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   userPolicyDetail,
   userPolicyExtractIr,
   userPolicyGenerateRego,
+  userPolicyPublish,
   userPolicyTargets,
 } from "../lib/api";
 import { extractErr } from "../lib/utils";
@@ -18,18 +19,20 @@ import type {
  *
  *   1. Extract IR  →  POST /me/policies/{id}/extract-ir
  *   2. Generate Rego  →  POST /me/policies/{id}/generate-rego
- *   3. (View targets — table below; review/approve flows ship in PR 19)
- *   4. (Publish — ships in PR 20 once review is complete)
+ *   3. Review targets (approve/reject/edit) — per-target page
+ *   4. Publish — locks the policy and lets it ship in the next bundle build
  *
  * Actions only show when applicable (e.g. Extract IR is hidden if
- * ir_json is already populated; Generate Rego only shows if IR exists).
+ * ir_json is already populated; Generate Rego only shows if IR exists;
+ * Publish requires at least one approved target).
  */
 export default function PortalPolicyDetailPage() {
+  const navigate = useNavigate();
   const { id = "" } = useParams<{ id: string }>();
   const [policy, setPolicy] = useState<CustomerPolicyDetail | null>(null);
   const [targets, setTargets] = useState<TargetSummary[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"ir" | "rego" | null>(null);
+  const [busy, setBusy] = useState<"ir" | "rego" | "publish" | null>(null);
 
   const loadAll = () => {
     setErr(null);
@@ -64,6 +67,27 @@ export default function PortalPolicyDetailPage() {
     setErr(null);
     try {
       await userPolicyGenerateRego(id);
+      loadAll();
+    } catch (e) {
+      setErr(extractErr(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onPublish = async () => {
+    if (
+      !window.confirm(
+        "Publish this policy? Once published, its targets are frozen — to " +
+          "change anything you'll need to create a new version."
+      )
+    ) {
+      return;
+    }
+    setBusy("publish");
+    setErr(null);
+    try {
+      await userPolicyPublish(id);
       loadAll();
     } catch (e) {
       setErr(extractErr(e));
@@ -288,7 +312,94 @@ export default function PortalPolicyDetailPage() {
             </p>
           </section>
         ) : null}
+
+        {/* Publish */}
+        <section className="card p-6">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 mb-1">
+                Publish
+              </h2>
+              <p className="text-sm text-slate-500">
+                Publishing freezes the policy's targets so they can ship in
+                the next bundle build. To change anything after publish,
+                create a new version.
+              </p>
+            </div>
+            <div className="text-right text-xs">
+              <div className="text-slate-500">
+                Approved targets
+              </div>
+              <div className="text-slate-900 font-mono">
+                {targets.filter((t) => t.review_status === "approved").length}
+                {" / "}
+                {targets.length}
+              </div>
+            </div>
+          </div>
+
+          {policy.status === "published" ? (
+            <div className="text-sm space-y-3">
+              <div className="inline-block bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-medium">
+                published
+              </div>
+              <p className="text-slate-600">
+                This policy is published. Approved targets are eligible to
+                ship in the next bundle build.
+              </p>
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                onClick={() => navigate("/portal/bundles")}
+              >
+                Go to bundles →
+              </button>
+            </div>
+          ) : (
+            <PublishGate
+              busy={busy === "publish"}
+              targets={targets}
+              onPublish={onPublish}
+              disabled={busy !== null}
+            />
+          )}
+        </section>
       </main>
+    </div>
+  );
+}
+
+function PublishGate({
+  busy,
+  targets,
+  onPublish,
+  disabled,
+}: {
+  busy: boolean;
+  targets: TargetSummary[];
+  onPublish: () => void;
+  disabled: boolean;
+}) {
+  const approvedCount = targets.filter(
+    (t) => t.review_status === "approved"
+  ).length;
+  const canPublish = approvedCount > 0;
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        className="btn-primary text-sm"
+        onClick={onPublish}
+        disabled={!canPublish || disabled}
+      >
+        {busy ? "Publishing…" : "Publish policy"}
+      </button>
+      {!canPublish ? (
+        <p className="text-xs text-amber-700">
+          At least one target must be approved before publishing. Visit a
+          target row above to approve.
+        </p>
+      ) : null}
     </div>
   );
 }
