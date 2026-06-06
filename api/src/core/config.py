@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["http://localhost:3000"]
     debug: bool = False
 
+    # Logging. log_format=json emits one structured JSON object per
+    # log line — what every log aggregator (Loki, ELK, Datadog) wants.
+    # log_format=plain is the human-readable dev format with the
+    # correlation ID prefixed for grep-ability.
+    log_level: str = "info"
+    log_format: str = "json"
+
     # Operator-admin bearer token (gates tenant/token admin endpoints)
     portal_admin_token: str = ""
 
