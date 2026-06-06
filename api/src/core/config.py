@@ -3,33 +3,40 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # PostgreSQL — compliance_reader (read-only, customer compliance DB)
-    pg_host: str = "192.168.4.62"
+    # PostgreSQL — compliance_reader (read-only, customer compliance DB).
+    # Hosts default to localhost to avoid silently connecting to a
+    # specific production environment if the operator forgets to set
+    # env vars. Passwords have no default — Pydantic raises at startup
+    # if PG_PASSWORD / PORTAL_PG_PASSWORD aren't set.
+    pg_host: str = "localhost"
     pg_port: int = 5432
     pg_database: str = "compliance"
     pg_user: str = "compliance_reader"
     pg_password: str
 
-    # PostgreSQL — portal's OWN database (tenants, cve_events, artifacts)
-    # Defaults to the same host but a different DB.
-    portal_pg_host: str = "192.168.4.62"
+    # PostgreSQL — portal's OWN database (tenants, cve_events, artifacts).
+    portal_pg_host: str = "localhost"
     portal_pg_port: int = 5432
     portal_pg_database: str = "aac_portal"
     portal_pg_user: str = "aac_portal_app"
-    portal_pg_password: str = ""
+    portal_pg_password: str
 
-    # AAP Controller
-    aap_url: str = "https://192.168.4.62"
+    # AAP Controller. verify_ssl defaults to True; operators who really
+    # need to talk to a self-signed AAP must opt out explicitly with
+    # AAP_VERIFY_SSL=false.
+    aap_url: str = ""
     aap_token: str = ""
-    aap_verify_ssl: bool = False
+    aap_verify_ssl: bool = True
 
-    # OPA
-    opa_security_url: str = "http://192.168.4.62:8181"
-    opa_compliance_url: str = "http://192.168.4.62:8182"
-    opa_ot_url: str = "http://192.168.4.62:8183"
+    # OPA. Localhost defaults so a missing env var is obviously wrong
+    # rather than silently hitting production.
+    opa_security_url: str = "http://localhost:8181"
+    opa_compliance_url: str = "http://localhost:8182"
+    opa_ot_url: str = "http://localhost:8183"
 
-    # Portal
-    secret_key: str = "change-me-in-production"
+    # Portal. secret_key has no default — Pydantic raises if SECRET_KEY
+    # is unset, so the app can't start signed with a well-known key.
+    secret_key: str
     allowed_origins: list[str] = ["http://localhost:3000"]
     debug: bool = False
 

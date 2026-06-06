@@ -20,6 +20,9 @@ if _API_ROOT not in sys.path:
 os.environ.setdefault("PG_PASSWORD", "test")
 os.environ.setdefault("PORTAL_PG_PASSWORD", "test")
 os.environ.setdefault("PORTAL_ADMIN_TOKEN", "test-admin-token")
+# SECRET_KEY is required by config.Settings — Pydantic raises at
+# import time otherwise. Tests use a deterministic dev-only value.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 
 # Re-export the DB integration fixtures so any test file that needs a
 # real PostgreSQL pool can `def test_x(pg_pool):` directly. The
