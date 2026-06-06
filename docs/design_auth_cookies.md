@@ -1,7 +1,13 @@
 # Design — HttpOnly Cookies + CSRF for Browser Auth
 
-**Status:** draft for review — implementation deferred pending decisions
-on this doc.
+**Status:** draft for review — implementation gated on the answers
+to the Open Questions section.
+
+**Principle:** This is auth for a security product. Browser-side
+credential storage has to be **right** the first time — no
+"localStorage for now, cookies later." No commercial product
+dependency, pure engineering work; we can ship the production
+design at customer-1 grade today.
 
 ## Problem
 
@@ -9,83 +15,75 @@ Three browser-facing tokens currently live in `localStorage`
 (`frontend/src/lib/auth.ts:3-4, 33-35, 46-69`):
 
 - Operator **admin token** — gates `/api/admin/v1/...` endpoints
-- Tenant **session token** — gates `/api/portal/v1/me/...` endpoints
-- (Tenant token *secret* — operator-issued for the AAC bridge — also
-  shows once in the UI and is copy-pasted into the bridge config; this
-  one stays as bearer, see § Out of scope)
+- Tenant **user session token** — gates `/api/portal/v1/me/...`
+- Tenant **token secret** — operator-issued M2M secret; shown once
+  in the UI and copy-pasted into the AAC bridge config
 
 `localStorage` is readable by any JavaScript that runs on the page.
-A single XSS payload — bypassed CSP, an unsanitized field, a
-compromised npm dep — exfiltrates all tokens stored there. The
-mitigation is to put auth state in **HttpOnly cookies** so JS can't
-read it, then add CSRF protection for state-changing requests
-(because cookies are sent automatically with cross-origin requests,
-which is what XSRF exploits).
+One XSS — bypassed CSP, an unsanitized field, a compromised npm
+dependency — exfiltrates every token stored there. For a security
+product, the localStorage path is not acceptable.
 
 ## Recommendation
 
-Move both browser tokens to HttpOnly, Secure, SameSite=Lax cookies.
-Add a double-submit CSRF token pattern: the server issues a non-HttpOnly
-`csrf` cookie at login; the frontend echoes its value back via the
-`X-CSRF-Token` header on every state-changing request. The server
-validates the two match. Because the attacker can't read either the
-session cookie or the csrf cookie cross-origin, the double-submit is
-sufficient.
+Move both browser-resident tokens (admin + user session) to
+**HttpOnly, Secure, SameSite=Lax cookies** so JS can't read them.
+Add a **double-submit CSRF token** for state-changing requests:
+the server issues a non-HttpOnly `aac_csrf` cookie at login, the
+frontend reads it and echoes it back via `X-CSRF-Token` on POST /
+PATCH / DELETE, the server validates the two match.
+
+The tenant **token secret** (M2M auth between the AAC bridge and
+the portal) **stays as bearer** — bridges are not browser clients;
+cookies don't apply.
 
 ### Cookie layout
 
 | Cookie | Contents | HttpOnly | Secure | SameSite | Lifetime |
 |--------|----------|----------|--------|----------|----------|
-| `aac_session` | tenant-user session token | yes | yes (prod) | Lax | matches `session_lifetime_hours` |
-| `aac_admin` | operator admin token | yes | yes (prod) | Lax | matches admin token TTL |
-| `aac_csrf` | random CSRF token | **no** (frontend must read it) | yes (prod) | Lax | per session |
+| `__Host-aac_session` | tenant-user session token | yes | yes (prod) | Lax | matches `session_lifetime_hours` |
+| `__Host-aac_admin` | operator admin token | yes | yes (prod) | Lax | matches admin token TTL |
+| `__Host-aac_csrf` | random CSRF token | **no** (frontend must read) | yes (prod) | Lax | per session |
 
-`Secure` is off in local dev (`debug: True`) so cookies work over
-plain HTTP. The auth module sets the flag from settings, not from a
-literal.
+`__Host-` prefix rejects cookies on HTTP, requires `Path=/`, and
+forbids `Domain=` — the strictest transport guarantees available
+in cookie-land. Dev uses bare names (HTTP works); production uses
+the prefixed forms.
 
 ### Why double-submit and not synchronizer token
 
 Synchronizer token (server holds a per-session CSRF value, frontend
-fetches it from `/csrf-token`, server compares against the value on
-disk) is the textbook pattern but requires server-side storage.
-Double-submit (server compares the cookie value against the header
-value; both came from the client; an attacker can't set the cookie
-on the user's behalf cross-origin) is stateless and good enough for
-our threat model. Recommended by OWASP for SPAs.
-
-The csrf cookie value is per-session, regenerated on login, cleared
-on logout. The token is opaque to the frontend — it just copies
-cookie → header.
+fetches it from `/csrf-token`, server compares against the value
+on disk) is textbook but requires server-side storage. Double-submit
+is stateless and equivalently secure for our threat model: an
+attacker can't both set the cookie on the user's behalf AND read
+the cookie value cross-origin. OWASP-recommended for SPAs.
 
 ## Implementation outline
 
 ### Backend
 
 ```
-api/src/core/cookies.py       (new)
+api/src/core/cookies.py    (new)
     set_session_cookie(response, token, settings) -> None
     clear_session_cookie(response) -> None
     set_admin_cookie(response, token, settings) -> None
     clear_admin_cookie(response) -> None
     set_csrf_cookie(response, settings) -> str
-    require_csrf(request) -> None    # dependency factory
+    require_csrf(request) -> None    # Depends factory
 
 api/src/core/sessions.py
-    require_tenant_user(...)         # accept token from cookie OR header
-                                     # during the transition phase
-api/src/core/admin_auth.py           (new — extract from current logic)
-    require_admin(...)               # cookie OR header
+    require_tenant_user(...)    # cookie OR Authorization header
+                                # during transition window
 
-api/main.py
-    settings.cookie_secure: bool     # derived from `not debug`
-    settings.cookie_samesite: str    # default "lax"
+api/src/core/admin_auth.py    (new — extract current logic)
+    require_admin(...)          # cookie OR header
 ```
 
 The `Authorization: Bearer` path is preserved during the migration
-window (see § Migration). Both paths converge on the same
-`require_tenant_user` / `require_admin` dependencies; the dependency
-reads from whichever source has a value.
+window. Both paths converge on the same `require_tenant_user` /
+`require_admin` dependencies; the dependency reads from whichever
+source has a value.
 
 ### Login flow change
 
@@ -93,118 +91,127 @@ reads from whichever source has a value.
 POST /api/portal/v1/auth/login
     body: { tenant_id, email, password }
     --- successful response:
-    Set-Cookie: aac_session=<token>; HttpOnly; Secure; SameSite=Lax
-    Set-Cookie: aac_csrf=<random>; Secure; SameSite=Lax
+    Set-Cookie: __Host-aac_session=<token>; HttpOnly; Secure; SameSite=Lax
+    Set-Cookie: __Host-aac_csrf=<random>;  Secure; SameSite=Lax
     body: { mfa_required, mfa_verified, expires_at }
-        # NOTE: no session_token in body — browsers don't need it
+        # NOTE: no session_token in body for browser callers.
+        # During the transition window, a `X-Portal-Client: cli`
+        # header opts back into the body-token path for non-browser
+        # callers (integration tests, scripts).
 ```
-
-The body's `session_token` field is removed in the cookie world.
-During the migration phase it stays so non-browser clients (CLI / curl
-testers) can still pull it from the response.
 
 ### CSRF middleware
 
 ```
 api/src/core/csrf.py    (new)
-    require_csrf as a FastAPI Depends factory.
+    require_csrf — Depends factory.
     Applied via dependency on every POST / PATCH / DELETE endpoint
     that uses cookie auth.
 ```
 
-`GET` is exempt — read-only methods aren't CSRF targets.
+GET / HEAD are exempt — read-only methods aren't CSRF targets.
 
-The dependency reads `aac_csrf` from the cookie and `X-CSRF-Token`
-from the header, asserts they're equal and non-empty. Mismatch → 403.
+Mismatch → 403 with `detail: "csrf mismatch"`.
 
 ### Frontend
 
 ```
 frontend/src/lib/auth.ts
-    - drop localStorage reads / writes
-    - readCsrfFromCookie(): reads aac_csrf cookie value
+    - Drop localStorage reads / writes
+    - readCsrfFromCookie(): reads __Host-aac_csrf
+
 frontend/src/lib/api.ts
-    - axios `withCredentials: true` so cookies travel
+    - axios: withCredentials: true
     - request interceptor: attach X-CSRF-Token from cookie on
       POST / PATCH / DELETE
+
 frontend/src/App.tsx
-    - RequirePortalUser / RequireAdmin check via a /me call
-      (server returns 401 if no valid cookie) rather than reading
-      localStorage
+    - RequirePortalUser / RequireAdmin gate on a /me call
+      (server returns 401 if cookie missing or invalid)
+      rather than reading localStorage
 ```
 
-The `getUserSession` / `getAdminToken` / `clearUserSession`
-helpers go away. Instead, a small `useSession` hook calls `/me` on
-mount and caches the result; logout calls the existing logout endpoint
-and lets the server clear the cookies.
+`getUserSession` / `getAdminToken` / `clearUserSession` go away.
+Replaced by a small `useSession` hook that calls `/me` on mount
+and caches; logout calls the existing logout endpoint and lets
+the server clear the cookies.
 
-## Migration
+### Migration
 
-The trick: SPAs and non-browser clients use the same endpoints. We
-can't flip the auth mode hard. Three releases:
+Three releases — the SPA and non-browser clients use the same
+endpoints, so we can't flip auth mode hard.
 
 | Release | Backend | Frontend | Reversible? |
 |---------|---------|----------|-------------|
-| N | Login endpoints set BOTH cookie AND return `session_token` in body. `require_tenant_user` accepts cookie OR `Authorization` header. CSRF dependency exists but is NOT applied yet. | Still uses localStorage path; ignores the cookie. | Yes — disable cookie setting |
-| N+1 | Apply CSRF dependency to state-changing endpoints. | Switch to cookie path; clear localStorage on first load; honor CSRF. | Reversible per-PR but realistically forward-only once the frontend ships |
-| N+2 | Drop the `session_token` from the response body. Drop the Authorization-header path. | (nothing — already on cookies) | No |
+| N | Login endpoints set cookies AND return `session_token` in body. `require_tenant_user` accepts cookie OR header. CSRF dependency exists but is NOT yet applied. | Still uses localStorage; ignores the cookie. | Yes — disable cookie setting |
+| N+1 | Apply CSRF dependency to state-changing endpoints. | Switch to cookie path; clear localStorage on first load; honor CSRF. | Reversible per-PR; realistically forward-only once frontend ships |
+| N+2 | Drop `session_token` from response body for browser callers (keep the `X-Portal-Client: cli` opt-in for CLI). Drop the Authorization-header path for browser flows. | (nothing — already on cookies) | No |
 
-Phase N is risk-free. Phase N+1 is the real switch — needs a coordinated
-release. Phase N+2 is cleanup.
+Phase N is risk-free. Phase N+1 is the real switch — needs a
+coordinated release. Phase N+2 is the cleanup that locks in the
+new world.
+
+### AAC bridge interaction
+
+This work doesn't change the bridge auth path:
+- The bridge uses the tenant **token secret** as a bearer token,
+  not a cookie.
+- The tenant token secret stays in the API as a bearer-auth path.
+- The cookie work covers only the operator console SPA and the
+  tenant portal SPA — both browser-based.
 
 ## Open questions
 
-1. **Cross-origin posture.** Today the frontend is served by nginx on
-   port 3000 and the API is `api:8000` inside the compose network. After
-   PR #37 the API isn't published; the SPA always sees the API at the
-   same origin via `/api/`. So we're same-origin and `SameSite=Lax` is
-   fine. Confirm there's no future plan to split origins (e.g. CDN-hosted
-   SPA + separate API host).
-2. **Admin token UX.** The operator admin token is currently shown by
-   the login screen for copy-paste. With cookies, the operator never
-   *sees* the token. That's a UX change. Is the existing
-   `setAdminToken(token)` flow used outside the SPA (CLI scripts, ops
-   tooling)? If yes, we keep the bearer path for those callers; if no,
-   we can drop it.
-3. **CLI / integration tests.** httpx + pytest can drive cookies fine
-   (`AsyncClient` supports them), so existing tests adapt. The 23-tenant
-   integration test in `test_tenant_users_integration.py` uses the
-   admin token via header — we either keep header-path for admin during
-   transition, or switch the test to login-and-use-cookie.
-4. **Logout-everywhere semantics.** Today "sign out of all devices"
-   revokes every session row server-side; the browser clears
-   localStorage. With cookies, clearing one browser's cookie doesn't
-   touch any other browser. The server-side revocation already handles
-   the security-critical part — but the user-facing message should
-   probably change.
-5. **Cookie name prefix.** `__Host-aac_session` would add transport
-   security (rejects on HTTP, no `Domain=` attribute, must be `/`).
-   Recommendation: use `__Host-` prefix in production, plain name in
-   dev. Trade-off: tooling that introspects cookies sometimes hides
-   `__Host-` cookies.
+1. **Cross-origin posture.** Today the SPA is served by nginx on
+   port 3000 and the API is `api:8000` inside the compose network;
+   PR #37 unpublishes 8000 so the SPA always sees the API at the
+   same origin via `/api/`. Same-origin → `SameSite=Lax` is fine.
+   **Are we sure there's no plan to ever serve the SPA from a CDN
+   on a different origin?** If yes, we revisit `SameSite=None` and
+   the CSRF strategy.
+2. **Admin token UX trade-off.** Today the operator console shows
+   the admin token after login so it can be copy-pasted into CLI /
+   ops scripts. With cookies, the operator never sees the token.
+   **Is the admin token used outside the browser today?** If yes,
+   we need to either: (a) ship a separate "issue CLI token" admin
+   action that returns the token in the response body, or (b) keep
+   the bearer path indefinitely for ops while cookies handle the
+   SPA. **Recommendation: (a), with the CLI token having a
+   shorter TTL than the cookie path.**
+3. **CLI / integration tests.** httpx + pytest handle cookies fine
+   (`AsyncClient` supports them). The existing
+   `test_tenant_users_integration.py` uses the admin token via
+   header. **Recommendation: keep the header path during the
+   transition; convert the test to cookie path in phase N+2.**
+4. **Logout-everywhere semantics.** Today "sign out of all
+   devices" revokes every session row server-side; the browser
+   clears localStorage. With cookies, clearing one browser's
+   cookie doesn't touch any other. The server-side session
+   revocation already handles the security-critical part — but
+   the UI message should change from "Sign out of all devices"
+   to "Revoke all active sessions" so the model is honest.
 
 ## Out of scope
 
-- **Tenant token secret** (M2M bridge auth) stays as bearer. Bridges
-  are not browser clients; cookies don't apply.
-- **Per-request bearer for the LLM / OPA proxy paths** — those are
-  internal server-to-server; cookies aren't involved.
+- **Tenant token secret** (M2M bridge auth) stays as bearer.
+- **Per-request bearer for the LLM / OPA proxy paths** — internal
+  server-to-server; cookies don't apply.
 - **SAML / OIDC for SSO.** A future PR. Cookie-based session is a
   prerequisite, but the SSO design is separate.
 
 ## Acceptance criteria for the implementation PRs
 
-- Backend supports BOTH header and cookie paths through phase N+1 (one
-  test exercises each).
+- Backend supports BOTH header and cookie paths through phase N+1
+  (one test exercises each).
 - CSRF protection covers every state-changing endpoint; one test
   asserts a mismatched CSRF returns 403.
 - Frontend has zero `localStorage.setItem(...token...)` call sites
   after phase N+1.
 - `useSession` / `useAdmin` hooks centralize the auth check (no
   per-page re-implementation).
-- A new doc — `docs/customer_portal_guide.md` — explains the
-  cookie-based session model in customer terms (replaces references
-  to "session token in the response body").
+- `docs/customer_portal_guide.md` is updated to describe the
+  cookie-based session model in customer terms (replaces
+  references to "session token in the response body").
 
 ## Implementation effort
 
@@ -212,6 +219,5 @@ release. Phase N+2 is cleanup.
 - Phase N+1 (frontend switch + CSRF wiring + tests): 1.5 days
 - Phase N+2 (cleanup): 0.5 day
 
-Roughly 3 engineering days total. The risk is concentrated in
-phase N+1 — every page that calls the API needs `withCredentials`
-and CSRF.
+Roughly 3 engineering days total. Risk concentrated in phase N+1
+— every page that calls the API needs `withCredentials` and CSRF.

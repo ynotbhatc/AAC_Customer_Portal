@@ -1,30 +1,34 @@
 # Design — Secret Encryption at Rest
 
-**Status:** draft for review — implementation deferred pending decisions
-on this doc.
+**Status:** draft for review — implementation gated on the answers to
+the Open Questions section.
+
+**Principle:** AAC is a security product. Credential storage is
+load-bearing. The architecture has to be **right** the first time —
+no plaintext columns in production. The *operational backend* can
+start at OSS / dev tier and graduate to a hardened production
+backend when we onboard the first paying customer; the *interface*
+that talks to that backend doesn't change.
 
 ## Problem
 
-Two columns currently hold sensitive material in plaintext:
+Two columns hold sensitive material in plaintext:
 
-| Table | Column | Why plaintext today |
-|-------|--------|---------------------|
-| `tenant_tokens` | `token_secret_plaintext` (migration 004:9-24) | The operator needs to display the secret once at issue time; the bridge stores it offline for M2M auth. We also store a bcrypt hash for verification, but the plaintext is referenced by `feeds/inventory_puller.py` when the portal makes outbound calls on behalf of a tenant. |
-| `tenant_user_mfa_factors` | `totp_secret_plaintext` (me_mfa.py:13-20) | TOTP requires the actual seed to compute the current 6-digit code. Hashing is not an option — verification reproduces the code. |
+| Table | Column | Why plaintext today | Bridge implication |
+|-------|--------|---------------------|---------------------|
+| `tenant_tokens` | `token_secret_plaintext` (migration 004:9-24) | Operator must display the secret once at issue time; the on-site AAC bridge stores it in its Ansible Vault for outbound auth back to the portal. `feeds/inventory_puller.py` also reads it. | The portal-side plaintext is one half of the trust chain. The bridge holds the other half in Ansible Vault. Recovering ours recovers the bridge's auth credential. |
+| `tenant_user_mfa_factors` | `totp_secret_plaintext` (me_mfa.py:13-20) | TOTP requires the seed itself to compute the current code. Hashing isn't an option for this column. | None — TOTP is browser-side. |
 
-Anyone with read access to the portal's PostgreSQL database can recover
-every bridge credential and every TOTP seed. The columns are explicitly
-flagged as TODO-for-encryption in the migration comment, but the work
+Anyone with read access to the portal's PostgreSQL database can
+recover every bridge credential and every TOTP seed. The columns are
+explicitly flagged TODO-for-encryption in the migration. The work
 has never landed.
 
 ## Recommendation
 
-Adopt **envelope encryption** with a pluggable Key Encryption Key (KEK)
-backend. Primary backend: **HashiCorp Vault Transit**. Secondary backends
-behind the same interface for AWS/Azure/GCP customers who don't run
-Vault.
-
-### What envelope encryption looks like here
+**Envelope encryption with a pluggable Key Encryption Key (KEK)
+provider interface.** Ship the proper architecture now; pick the
+backend pragmatically based on where we are in the customer journey.
 
 ```
                                   ┌────────────────────┐
@@ -40,26 +44,54 @@ Vault.
                                                        │
                           ┌────────────────────────────┘
                           ▼
-                ┌─────────────────────┐
-                │  KEK (lives in KMS) │
-                │  Vault Transit /    │
-                │  AWS KMS /          │
-                │  Azure Key Vault    │
-                └─────────────────────┘
-                          │
-                          ▼
-                 wrapped DEK (encrypted)
+                ┌─────────────────────────┐
+                │  KEK (lives in KP)      │
+                │                         │
+                │  Dev / pre-customer:    │
+                │    LocalSealed         │ ← ship NOW
+                │  Production / customer: │
+                │    OpenBao or Vault     │ ← config flip when needed
+                │    Community Edition    │
+                └─────────────────────────┘
 ```
 
 Stored per row: `ciphertext`, `nonce`, `wrapped_dek`, `key_id`,
-`algorithm`. The portal never holds the KEK material — it sends
-the DEK to KMS for wrap/unwrap on each use.
+`algorithm`. The portal never holds raw KEK material; the KP unwraps
+on demand.
+
+### Backend tiers (pragmatic)
+
+| Backend | Use when | OSS? | Cost | Production-safe? |
+|---------|----------|------|------|-------------------|
+| `LocalSealedKeyProvider` | Pre-customer, dev environments | Yes (built-in) | Free | No — the KEK is sealed by `SECRET_KEY` which lives in the same env as the DB. A breach of the host gets both. |
+| **`OpenBaoKeyProvider`** | First paying customer onward | **Yes — MPL-2.0** ([OpenBao](https://openbao.org/)) | Free | Yes |
+| `VaultTransitKeyProvider` | Customer already runs Vault Community Edition (or Enterprise) | Yes — MPL-2.0 (Community) | Free for Community | Yes |
+| `AwsKmsKeyProvider` | AWS-native customer asks for it | No (proprietary) | Per-request | Yes |
+| `AzureKeyVaultKeyProvider` | Azure-native customer asks for it | No (proprietary) | Per-request | Yes |
+
+**Primary recommendation: OpenBao when we have customers.** OpenBao is
+the Linux Foundation fork of HashiCorp Vault that stayed under MPL-2.0
+when Vault switched to BUSL. Same wire format as Vault, drop-in for
+the Transit secrets engine, no commercial licensing exposure as we
+scale. If a customer specifically wants Vault Community or Enterprise
+that interoperates 1:1 with the same provider code — just point the
+`vault_addr` at theirs.
+
+**Today: `LocalSealedKeyProvider`.** The KEK is generated on first
+start, sealed by `SECRET_KEY`, stored at `var/secrets/kek.sealed`. It
+makes the encryption architecture real (call sites round-trip through
+the provider; the schema carries ciphertext + envelope metadata; key
+rotation is implemented) without taking a dependency on standing up
+OpenBao before we have customers. **The unfortunate truth: this is
+"better than plaintext" but does not pass a customer audit.** It's a
+documented stopgap.
 
 ### Why per-secret DEK (not a column-wide key)
 
-- Per-secret keys make compromise of one secret blast-radius-bounded.
-- Key rotation is a re-wrap of the DEKs, not a re-encrypt of every row.
-- Common pattern. Both Vault Transit and AWS KMS document it explicitly.
+- A single compromise is blast-radius bounded to one row.
+- Rotation is a re-wrap of the affected DEKs, not a re-encrypt of
+  every row.
+- Standard pattern documented by both Vault Transit and AWS KMS.
 
 ## Implementation outline
 
@@ -71,24 +103,29 @@ class KeyProvider(Protocol):
     async def unwrap(self, wrapped: WrappedKey) -> bytes: ...
     async def current_key_id(self) -> str: ...
 
-class VaultTransitKeyProvider(KeyProvider): ...   # primary
-class AwsKmsKeyProvider(KeyProvider): ...         # for AWS-native
-class LocalSealedKeyProvider(KeyProvider): ...    # dev / single-host
+class LocalSealedKeyProvider(KeyProvider): ...    # ship now
+class OpenBaoKeyProvider(KeyProvider): ...        # add when customers
+class VaultTransitKeyProvider(KeyProvider): ...   # same wire as OpenBao
+class AwsKmsKeyProvider(KeyProvider): ...         # opt-in per customer
 ```
 
 ```
-async def encrypt(provider: KeyProvider, plaintext: bytes) -> EncryptedSecret:
-    """One call per use site. Generates a DEK, encrypts with AES-256-GCM,
-    wraps the DEK with the KEK."""
+async def encrypt(provider, plaintext) -> EncryptedSecret:
+    """Generate a DEK, encrypt with AES-256-GCM, wrap the DEK
+    via the KP."""
 
-async def decrypt(provider: KeyProvider, encrypted: EncryptedSecret) -> bytes:
-    """Unwraps the DEK via KMS, decrypts the ciphertext."""
+async def decrypt(provider, encrypted) -> bytes:
+    """Unwrap the DEK via KP, decrypt the ciphertext."""
 ```
+
+`KEK_PROVIDER` config var picks the implementation. Default
+`local_sealed` for dev; production deployments set it to
+`openbao` / `vault_transit` and add the connection settings.
 
 ### Schema changes — migration 014
 
-Add new columns to both tables; keep the existing plaintext columns
-populated during transition so a rollback is possible:
+Add new columns; keep the existing plaintext columns through the
+transition for rollback safety:
 
 ```sql
 ALTER TABLE tenant_tokens
@@ -101,67 +138,87 @@ ALTER TABLE tenant_user_mfa_factors
 ```
 
 `envelope_meta` carries `{nonce, wrapped_dek, key_id, algorithm}`.
-The bytea column is the ciphertext.
 
 ### Call-site changes
 
-All call sites that previously read `*_plaintext` go through
-`decrypt(provider, ...)` instead. There are two: TOTP verification
-in `me_mfa.py` and tenant-token outbound use in
-`feeds/inventory_puller.py`.
+- `me_mfa.py` writes TOTP secret via `encrypt(...)`; verifies by
+  `decrypt(...)` + `pyotp.verify(...)`.
+- `tenants.py` writes new tenant token secrets via `encrypt(...)`.
+- `feeds/inventory_puller.py` decrypts at use time.
 
-All call sites that previously *wrote* the plaintext go through
-`encrypt(provider, ...)`: `tenants.py` (token creation) and `me_mfa.py`
-(TOTP setup).
-
-### Migration
-
-Three phases over three releases:
+### Migration phases
 
 | Release | What changes | Reversible? |
 |---------|-------------|-------------|
-| N | Add envelope columns. New writes populate BOTH plaintext + envelope. Reads still prefer plaintext. | Yes — drop new columns |
-| N+1 | Reads prefer envelope, fall back to plaintext if NULL. A one-shot backfill script encrypts existing plaintext rows. | Yes — flip read order back |
-| N+2 | Drop the plaintext columns. | No |
+| N | Add envelope columns. New writes populate BOTH plaintext + envelope. Reads still prefer plaintext. | Yes — drop columns |
+| N+1 | Reads prefer envelope, fall back to plaintext if NULL. Backfill script encrypts existing rows. | Yes — flip read order back |
+| N+2 | Drop plaintext columns. | No |
 
-The phasing matters because envelope decryption depends on KMS
-availability. The phase-N rollout doesn't take a hard dependency on
-KMS; phase N+1 introduces it; phase N+2 makes it required.
+Phase N is risk-free. Phase N+1 introduces the KP dependency. Phase
+N+2 is the cleanup that locks in the new world.
+
+### AAC bridge interaction
+
+The portal-side tenant token secret is one end of an M2M trust chain
+with the on-site AAC bridge:
+
+- **Portal** issues a token → operator copies the plaintext once →
+  bridge stores it in **Ansible Vault on-site** (encrypted at rest
+  by the bridge's vault password).
+- **Bridge** authenticates back to the portal using that token.
+- **Portal** uses the SAME plaintext for outbound calls (today) via
+  `inventory_puller.py`.
+
+After the encryption work lands:
+- The portal stores the secret as `ciphertext` + envelope metadata.
+- At issue time the portal returns the plaintext exactly once
+  (current behaviour preserved) so the operator can paste it into
+  the AAC bridge's Ansible Vault.
+- For outbound calls (`inventory_puller.py`), the portal decrypts
+  on demand via the KP.
+- **The bridge side is unchanged.** Ansible Vault keeps its own
+  copy. The portal's encryption-at-rest is independent of how the
+  bridge stores its half — neither side trusts the other to hold
+  the secret correctly.
 
 ## Open questions
 
-1. **Primary KMS backend.** Vault Transit aligns with AAC's existing
-   posture (every customer already runs Vault for compliance). AWS
-   KMS is the default for AWS-native customers. Recommendation:
-   Vault Transit as primary, AWS KMS as a documented second.
-2. **KMS unavailability behavior.** Two options:
-   - Fail closed: TOTP verification returns 503, bridge tokens unusable.
-   - Fail with audit: log + accept the request, emit a security event.
-   Recommendation: fail closed. A 503 with retry is acceptable; a
-   silent fallback to "we couldn't decrypt the secret, allow anyway"
-   is not.
-3. **Key rotation cadence.** Vault Transit supports automatic key
-   versioning; new writes use the new version, reads work against
-   any version still loaded. Recommendation: 90-day rotation,
-   automatic; no per-row re-encryption needed for rotation alone.
-4. **Local-dev backend.** What does an engineer running the portal
-   locally use when there's no KMS? Options:
-   - `LocalSealedKeyProvider` with a file-on-disk KEK (sealed with the
-     portal `SECRET_KEY`). Not production-safe; clearly labeled.
-   - Refuse to start without KMS. Forces every dev to run Vault dev
-     server, which is operational friction.
-   Recommendation: `LocalSealedKeyProvider` for dev, with a startup
-   warning if it's active in a non-`debug` config.
+1. **Are we OK shipping `LocalSealedKeyProvider` to pre-customer
+   environments?** It's "better than plaintext" but the KEK
+   ultimately depends on `SECRET_KEY` being safe — a full-host
+   compromise gets both. The alternative is to stand up OpenBao
+   in dev now and never use the local backend. Trade-off: ops
+   complexity vs purity. **Recommendation: yes ship local; document
+   it clearly; mandatory swap to OpenBao before first customer onboards.**
+2. **OpenBao vs Vault Community Edition for first customer.**
+   Functionally equivalent. OpenBao has zero commercial licensing
+   risk; Vault Community is what customers may already run. The
+   provider code is the same either way (same Transit API).
+   **Recommendation: OpenBao for our hosted deployments; Vault
+   Community when a customer asks because they already run Vault.**
+3. **KP-unavailable behavior.** Two options:
+   - Fail closed: TOTP verification returns 503; bridge tokens
+     unusable. Acceptable downtime; obvious failure mode.
+   - Fail with audit: log a security event, refuse the request.
+   **Recommendation: fail closed. A 503 with retry is acceptable;
+   any "we couldn't decrypt, allow anyway" path is unacceptable for
+   a security product.**
+4. **Key rotation cadence for production.** Vault Transit / OpenBao
+   support automatic key versioning; new writes use the new
+   version, reads work against any version still loaded.
+   **Recommendation: 90-day rotation, automatic; no per-row
+   re-encryption needed for rotation alone.**
 
 ## Out of scope
 
 - Encrypting OTHER columns (e.g., `ir_json` policy text). The
-  data-classification work to decide what else qualifies as a
-  "secret" is a separate conversation.
-- Field-level encryption for compliance evidence (`compliance_results`
-  in the read-only DB). That database is the customer's own; the
-  portal doesn't write to it.
+  data-classification work is a separate conversation.
+- Field-level encryption for compliance evidence
+  (`compliance_results` in the read-only DB). That database is the
+  customer's own; the portal doesn't write to it.
 - Rotating the portal's `SECRET_KEY` itself.
+- AAC bridge-side Ansible Vault management. The bridge already has
+  its own credential lifecycle; we're not changing it.
 
 ## Acceptance criteria for the implementation PRs
 
@@ -169,18 +226,22 @@ KMS; phase N+1 introduces it; phase N+2 makes it required.
   the provider interface.
 - A new integration test exercises the round-trip for both columns
   with `LocalSealedKeyProvider` (the only one we can run in CI).
-- The phase-N backfill script is idempotent — running it twice
-  yields the same result.
-- Documentation includes a runbook for "the KMS is down right now" —
+- An additional integration test (gated on
+  `OPENBAO_ADDR` env) exercises the round-trip against a live
+  OpenBao instance — same call sites, same assertions.
+- The phase-N backfill script is idempotent.
+- Documentation includes a runbook for "the KP is down right now" —
   what oncall does, what the user sees.
+- `docs/security_roadmap.md` is updated: the `LocalSealedKeyProvider`
+  entry moves from "in place but needs upgrade" to "deprecated; OpenBao
+  is the production path" once OpenBao integration lands.
 
 ## Implementation effort
 
-- Module + KMS interface + Vault provider: 1 day
+- Module + KP interface + `LocalSealedKeyProvider` + tests: 1 day
 - Schema migration + backfill script: half day
-- Call-site rewrites + tests: half day
-- AWS KMS provider (when needed): half day
+- Call-site rewrites: half day
+- `OpenBaoKeyProvider` implementation + smoke test: half day
 
-Roughly 2.5 engineering days for phases N + N+1. Phase N+2 (drop
-the plaintext columns) is a separate small PR once we've confirmed
-no rollback is needed.
+Total ~2.5 engineering days. Adding `AwsKmsKeyProvider` later is a
+half day per backend; the interface stays the same.
