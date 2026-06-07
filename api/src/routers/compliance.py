@@ -1,9 +1,22 @@
+from typing import Annotated, Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from ..core.database import get_pool
+from ..core.sessions import require_tenant_user
 from ..models.compliance import ComplianceResult, FrameworkSummary, HostSummary, ComplianceTrend
 import asyncpg
 
-router = APIRouter(prefix="/compliance", tags=["compliance"])
+# Every endpoint on this router requires a logged-in tenant user.
+# Compliance data is sensitive — read-access was previously
+# unauthenticated, which was the foundation gap the reviewer agent
+# called out. Multi-tenant scoping of the underlying compliance_results
+# table is a follow-on PR (P0-A2); for now the auth wall stops the
+# trivial unauth-read case.
+router = APIRouter(
+    prefix="/compliance",
+    tags=["compliance"],
+    dependencies=[Depends(require_tenant_user)],
+)
 
 
 @router.get("/results", response_model=list[ComplianceResult])

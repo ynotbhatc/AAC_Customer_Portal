@@ -19,10 +19,39 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client():
-    # Import here so conftest's env-var defaults are set before
-    # core.config.Settings is read.
+    """Bypass auth so the 501 stub responses are observable.
+
+    These tests pin the BUSINESS behavior (501 from unimplemented
+    routes), not the auth gate — see test_auth_gating.py for the
+    "anonymous → 401" pins.
+    """
     from main import app
-    return TestClient(app)
+    from src.core.portal_db import get_portal_pool
+    from src.core.sessions import require_tenant_user, require_tenant_user_mfa
+
+    fake_user = {
+        "session_id": "00000000-0000-0000-0000-000000000001",
+        "tenant_user_id": "00000000-0000-0000-0000-000000000002",
+        "tenant_id": "00000000-0000-0000-0000-000000000003",
+        "email": "test@example.com",
+        "display_name": "test",
+        "role": "user",
+        "mfa_required": False,
+        "mfa_enrolled": False,
+        "mfa_verified": False,
+    }
+
+    async def _stub_pool():
+        return None
+
+    app.dependency_overrides[get_portal_pool] = _stub_pool
+    app.dependency_overrides[require_tenant_user] = lambda: fake_user
+    app.dependency_overrides[require_tenant_user_mfa] = lambda: fake_user
+    try:
+        yield TestClient(app)
+    finally:
+        for dep in (get_portal_pool, require_tenant_user, require_tenant_user_mfa):
+            app.dependency_overrides.pop(dep, None)
 
 
 def test_remediation_list_returns_501(client):
