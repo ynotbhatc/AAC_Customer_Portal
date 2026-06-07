@@ -81,6 +81,25 @@ def test_aap_launch_returns_501(client):
     assert "AAP Controller" in r.json()["detail"]
 
 
+def test_compliance_results_by_id_route_is_registered():
+    """GET /api/compliance/results/{id} must exist as a route.
+
+    Pure route-inspection check — no DB needed. Catches a regression
+    where the route is accidentally removed or the path template
+    changes; previously this gap silently 404'd at the framework
+    level and looked like a missing row rather than a missing
+    endpoint.
+    """
+    from main import app
+
+    paths = {route.path for route in app.routes}
+    assert "/api/compliance/results/{result_id}" in paths, (
+        f"GET /api/compliance/results/{{result_id}} not registered. "
+        f"Compliance routes present: "
+        f"{sorted(p for p in paths if p.startswith('/api/compliance'))}"
+    )
+
+
 def test_compliance_models_include_new_fields():
     """The pydantic models must surface `trend` and `critical_violations`
     so the frontend types resolve at runtime. Pure-import check —

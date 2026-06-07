@@ -91,50 +91,65 @@ def test_json_formatter_emits_parseable_records_with_correlation_id():
     """The JsonFormatter is configured on the root logger. Emit a log
     line and confirm it's structured JSON with the expected fields.
 
-    Calls configure_logging() explicitly so the test doesn't depend
-    on pytest's caplog fixture (which installs its own
-    LogCaptureHandler — a StreamHandler subclass — at autouse, hiding
-    our JsonFormatter behind it in handler-iteration order).
+    Calls configure_logging() explicitly because pytest's caplog
+    fixture installs its own LogCaptureHandler (a StreamHandler
+    subclass) at autouse, which would hide our JsonFormatter in
+    handler-iteration order.
+
+    Snapshots and restores the root logger's handlers + level around
+    the call so subsequent tests in this session aren't left with our
+    replaced handler set — otherwise the next caplog-using test would
+    miss its captured records.
     """
     import logging as _l
 
     from src.core.logging import configure_logging
 
-    configure_logging()
-
     root = _l.getLogger()
+    saved_handlers = list(root.handlers)
+    saved_level = root.level
+    try:
+        configure_logging()
     # configure_logging() removes all existing handlers and adds
     # exactly one StreamHandler. Grab it directly.
-    handlers = [h for h in root.handlers if isinstance(h, _l.StreamHandler)]
-    assert handlers, "configure_logging() didn't install a StreamHandler"
-    handler = handlers[0]
-    formatter = handler.formatter
-    assert formatter is not None
+        handlers = [h for h in root.handlers if isinstance(h, _l.StreamHandler)]
+        assert handlers, "configure_logging() didn't install a StreamHandler"
+        handler = handlers[0]
+        formatter = handler.formatter
+        assert formatter is not None
 
-    record = _l.LogRecord(
-        name="test.logger",
-        level=_l.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="policy published",
-        args=(),
-        exc_info=None,
-    )
-    # The CorrelationIdFilter normally injects this. Mirror that for
-    # the synthetic record so the test exercises the formatter's
-    # treatment of the field.
-    record.correlation_id = "test-correlation-id"
+        record = _l.LogRecord(
+            name="test.logger",
+            level=_l.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="policy published",
+            args=(),
+            exc_info=None,
+        )
+        # The CorrelationIdFilter normally injects this. Mirror that
+        # for the synthetic record so the test exercises the
+        # formatter's treatment of the field.
+        record.correlation_id = "test-correlation-id"
 
-    formatted = formatter.format(record)
-    # If json format is configured, the line should parse as JSON;
-    # plain format is a structured string. Both modes must include
-    # the correlation id.
-    try:
-        payload = json.loads(formatted)
-        assert payload.get("correlation_id") == "test-correlation-id"
-        assert payload.get("message") == "policy published"
-        assert payload.get("level") == "INFO"
-    except json.JSONDecodeError:
-        # Plain format path — fall through to a substring check.
-        assert "test-correlation-id" in formatted
-        assert "policy published" in formatted
+        formatted = formatter.format(record)
+        # If json format is configured, the line should parse as
+        # JSON; plain format is a structured string. Both modes must
+        # include the correlation id.
+        try:
+            payload = json.loads(formatted)
+            assert payload.get("correlation_id") == "test-correlation-id"
+            assert payload.get("message") == "policy published"
+            assert payload.get("level") == "INFO"
+        except json.JSONDecodeError:
+            # Plain format path — fall through to a substring check.
+            assert "test-correlation-id" in formatted
+            assert "policy published" in formatted
+    finally:
+        # Restore root logger to whatever pytest had set up so the
+        # next test's caplog isn't broken by our handler swap.
+        for h in list(root.handlers):
+            root.removeHandler(h)
+        for h in saved_handlers:
+            root.addHandler(h)
+        root.setLevel(saved_level)
