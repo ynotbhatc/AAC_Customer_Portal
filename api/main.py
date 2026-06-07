@@ -48,6 +48,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# asgi-correlation-id: injects X-Request-ID on every request/response
+# so logs from one request can be stitched end-to-end. Added BEFORE
+# CORS so the header lands on CORS preflight responses too.
+app.add_middleware(CorrelationIdMiddleware)
+
 # CORS — explicit allowlist of headers. Combined with allow_credentials=True
 # a wildcard allow_headers=["*"] would let arbitrary client-set headers
 # ride credentialed requests; restrict to the ones the portal actually

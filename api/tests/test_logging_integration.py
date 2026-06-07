@@ -54,9 +54,15 @@ async def client():
 
 
 async def test_response_carries_correlation_id_when_client_omits_it(client):
-    """The middleware generates a fresh UUID per request."""
+    """The middleware generates a fresh UUID per request.
+
+    We hit `/health` because it's the simplest endpoint, but we don't
+    require 200 — without a real DB in CI it returns 503 from the
+    pool probe, and that doesn't affect the middleware test. What
+    matters is that the X-Request-ID header is present on every
+    response, regardless of status.
+    """
     r = await client.get("/health")
-    assert r.status_code == 200, r.text
     rid = r.headers.get("x-request-id") or r.headers.get("X-Request-ID")
     assert rid is not None, "X-Request-ID header missing on response"
     assert UUID_RE.match(rid), f"X-Request-ID is not a UUID: {rid!r}"
@@ -70,6 +76,9 @@ async def test_correlation_id_is_echoed_when_client_sends_one(client):
     silently generates a fresh ID if the incoming value isn't one),
     so we send a real uuid4. The middleware may normalize dashes
     away on echo — compare canonical forms.
+
+    Same as the test above, we don't require 200 — the middleware
+    runs regardless of whether the route succeeds.
     """
     rid_in = str(uuid.uuid4())
     r = await client.get("/health", headers={"X-Request-ID": rid_in})
@@ -78,22 +87,27 @@ async def test_correlation_id_is_echoed_when_client_sends_one(client):
     assert _normalize(rid_out) == _normalize(rid_in)
 
 
-def test_json_formatter_emits_parseable_records_with_correlation_id(caplog):
+def test_json_formatter_emits_parseable_records_with_correlation_id():
     """The JsonFormatter is configured on the root logger. Emit a log
     line and confirm it's structured JSON with the expected fields.
 
-    `caplog` captures the LogRecord, not the formatted string, so we
-    re-format with the configured formatter to assert on the wire
-    format the aggregator will see.
+    Calls configure_logging() explicitly so the test doesn't depend
+    on pytest's caplog fixture (which installs its own
+    LogCaptureHandler — a StreamHandler subclass — at autouse, hiding
+    our JsonFormatter behind it in handler-iteration order).
     """
     import logging as _l
 
+    from src.core.logging import configure_logging
+
+    configure_logging()
+
     root = _l.getLogger()
-    handler = next(
-        (h for h in root.handlers if isinstance(h, _l.StreamHandler)),
-        None,
-    )
-    assert handler is not None, "no StreamHandler on root logger"
+    # configure_logging() removes all existing handlers and adds
+    # exactly one StreamHandler. Grab it directly.
+    handlers = [h for h in root.handlers if isinstance(h, _l.StreamHandler)]
+    assert handlers, "configure_logging() didn't install a StreamHandler"
+    handler = handlers[0]
     formatter = handler.formatter
     assert formatter is not None
 
