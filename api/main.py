@@ -2,8 +2,11 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from asgi_correlation_id import CorrelationIdMiddleware
+
 from src.core.config import get_settings
 from src.core.database import get_pool, close_pool
+from src.core.logging import configure_logging
 from src.core.portal_db import get_portal_pool, close_portal_pool
 from src.routers import (
     auth,
@@ -33,6 +36,7 @@ async def lifespan(app: FastAPI):
 
 
 settings = get_settings()
+configure_logging()
 
 app = FastAPI(
     title="AAC Customer Portal API",
