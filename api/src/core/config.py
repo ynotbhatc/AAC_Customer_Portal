@@ -42,7 +42,9 @@ class Settings(BaseSettings):
 
     # Logging — consumed by core.logging.configure_logging.
     # log_level: DEBUG / INFO / WARNING / ERROR.
-    # log_format: "json" for structured logs (prod), "text" for dev.
+    # log_format: "json" for structured logs (prod) or "plain" for
+    # human-readable dev output. Anything other than "json" falls
+    # through to the plain formatter — see core/logging.py.
     log_level: str = "INFO"
     log_format: str = "json"
 
