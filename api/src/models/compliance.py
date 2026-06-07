@@ -30,9 +30,10 @@ class FrameworkSummary(BaseModel):
     compliant_hosts: int
     total_hosts: int
     last_assessed: datetime
-    # Computed as latest-7-day vs prior-7-day average compliance: a >5pp
-    # gain is "improving", >5pp drop is "declining", anything in between
-    # is "stable". Thresholds picked to filter normal noise.
+    # Computed as latest-7-day vs prior-7-day average compliance: a
+    # ≥5pp gain is "improving", ≥5pp drop is "declining", anything in
+    # between is "stable". The 5pp threshold filters day-to-day noise;
+    # see the SQL in routers/compliance.py for the implementation.
     trend: Trend
 
 
