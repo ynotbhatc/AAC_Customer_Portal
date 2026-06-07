@@ -26,6 +26,7 @@ import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..core.config import get_settings
+from ..core.rate_limit import rate_limit
 from ..core.passwords import (
     PasswordTooWeak,
     check_strength,
@@ -57,6 +58,7 @@ async def login(
     body: LoginRequest,
     request: Request,
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    _rate: Annotated[None, Depends(rate_limit("10/minute"))],
 ) -> SessionCreated:
     # Look up the user. Single round-trip; we deliberately do NOT
     # disclose whether the email vs the tenant vs the password was
@@ -119,7 +121,9 @@ _DUMMY_HASH = "$2b$12$YgjFp9TZAJTAOaKfDB9q6e8.dWWlmsiTzczWPpDBLwTZIWmS6jepi"
 @router.post("/password-reset/confirm", status_code=204, response_class=Response, response_model=None)
 async def password_reset_confirm(
     body: PasswordResetConfirm,
+    request: Request,
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    _rate: Annotated[None, Depends(rate_limit("5/minute"))],
 ) -> None:
     try:
         check_strength(body.new_password)
@@ -180,8 +184,10 @@ async def password_reset_confirm(
 @router.post("/totp/verify", status_code=204, response_class=Response, response_model=None)
 async def totp_verify(
     body: TotpVerifyRequest,
+    request: Request,
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+    _rate: Annotated[None, Depends(rate_limit("10/minute"))],
 ) -> None:
     """Second factor after a successful password login. Authenticated
     via the partially-verified session (mfa_verified=false) issued by

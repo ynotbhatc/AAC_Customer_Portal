@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["http://localhost:3000"]
     debug: bool = False
 
+    # Rate limiting (slowapi). Per-IP default applies to every endpoint;
+    # tighter per-route limits are applied at the endpoint decorator.
+    # Storage defaults to in-memory; set rate_limit_storage_uri to a
+    # redis:// URI for multi-worker deployments so the counters are
+    # shared across processes.
+    rate_limit_default: str = "200/minute"
+    rate_limit_storage_uri: str = ""
+
     # Operator-admin bearer token (gates tenant/token admin endpoints)
     portal_admin_token: str = ""
 
