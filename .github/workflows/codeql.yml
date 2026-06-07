@@ -1,0 +1,55 @@
+name: CodeQL
+
+# Static analysis on every PR + every push to main, plus a weekly
+# schedule so the analysis doesn't go stale on quiet branches. The
+# results feed the MainBranch ruleset's `code_scanning` rule which
+# gates merges on `errors`-and-above severity.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 05:30 UTC — picked to land in the quietest window for
+    # both EU and US runners (most teams' CI traffic is daytime
+    # weekdays in their local TZ).
+    - cron: '30 5 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # python = api/, javascript-typescript = frontend/. CodeQL
+        # auto-detects which directories belong to which language so
+        # no per-path config is required here.
+        language: ['python', 'javascript-typescript']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality is the broader pack — catches the
+          # P0/P1-class issues the reviewer agent flagged (missing
+          # auth, hardcoded secrets, etc.) on top of the default
+          # security-extended set.
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
