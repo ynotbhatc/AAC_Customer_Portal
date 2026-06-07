@@ -100,7 +100,7 @@ async def get_trend(
             SUM(failed_controls) AS failed_controls
         FROM compliance_results
         WHERE framework = $1
-          AND evaluation_timestamp >= NOW() - ($2 || ' days')::INTERVAL
+          AND evaluation_timestamp >= NOW() - make_interval(days => $2)
           {host_filter}
         GROUP BY DATE_TRUNC('day', evaluation_timestamp)
         ORDER BY date ASC
