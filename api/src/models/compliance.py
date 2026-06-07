@@ -43,9 +43,10 @@ class HostSummary(BaseModel):
     last_assessed: datetime
     # Count of failed controls on the host's latest assessment per
     # framework, summed. Today every failed control counts as
-    # "critical" because the underlying compliance_results.violations
-    # is a list of strings with no severity field. When a structured
-    # severity reaches this table, narrow this to severity = critical.
+    # "critical" because the compliance_results.violations payload
+    # has no per-violation severity field — it carries entries but
+    # not a structured severity. When per-violation severity reaches
+    # this table, narrow this to severity = 'critical'.
     critical_violations: int
 
 

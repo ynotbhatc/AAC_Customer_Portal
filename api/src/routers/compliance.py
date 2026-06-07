@@ -117,7 +117,11 @@ async def list_frameworks(pool: asyncpg.Pool = Depends(get_pool)):
         prior_window AS (
             SELECT
                 framework,
-                AVG(compliance_percentage) AS prior_percentage
+                -- Round to the same precision as latest_percentage so
+                -- the >=5pp trend threshold compares symmetric values.
+                -- Without this, rounding the latest but not the prior
+                -- shifts the cutoff near the boundary.
+                ROUND(AVG(compliance_percentage), 1) AS prior_percentage
             FROM windows
             WHERE window = 'prior'
             GROUP BY framework
@@ -146,9 +150,10 @@ async def list_frameworks(pool: asyncpg.Pool = Depends(get_pool)):
 async def list_hosts(pool: asyncpg.Pool = Depends(get_pool)):
     # critical_violations = sum of failed_controls across each host's
     # most recent assessment per framework. Today treats every failed
-    # control as "critical" because compliance_results.violations is a
-    # list of strings with no per-violation severity. Once severity is
-    # added to the table, narrow this to severity = 'critical'.
+    # control as "critical" because compliance_results.violations has
+    # no per-violation severity field — entries are there but there's
+    # no structured severity to filter on. Once severity is added to
+    # the table, narrow this to severity = 'critical'.
     rows = await pool.fetch(
         """
         WITH ranked AS (
