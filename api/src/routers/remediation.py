@@ -21,9 +21,19 @@ Implementation plan when ready:
       with `approved_by` recorded in the audit log.
     - Gate PATCH behind the auth dependency once auth is in place.
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-router = APIRouter(prefix="/remediation", tags=["remediation"])
+from ..core.sessions import require_tenant_user, require_tenant_user_mfa
+
+# Read = logged-in user. Writes (PATCH /{id}) require MFA-verified
+# sessions because remediation state changes are accountable actions
+# (control closure feeds the audit log + the eventual four-eyes
+# approval check).
+router = APIRouter(
+    prefix="/remediation",
+    tags=["remediation"],
+    dependencies=[Depends(require_tenant_user)],
+)
 
 
 _NOT_IMPLEMENTED = {
@@ -46,7 +56,7 @@ async def list_items(
     )
 
 
-@router.patch("/{item_id}")
+@router.patch("/{item_id}", dependencies=[Depends(require_tenant_user_mfa)])
 async def update_status(item_id: str):
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,

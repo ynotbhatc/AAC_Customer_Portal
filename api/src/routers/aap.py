@@ -15,9 +15,18 @@ Implementation plan:
     - Audit the launch (actor, template, target host) — required
       for the four-eyes governance pattern.
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-router = APIRouter(prefix="/aap", tags=["aap"])
+from ..core.sessions import require_tenant_user_mfa
+
+# Launching an AAP job is an infrastructure-mutation action — requires
+# an MFA-verified session, same bar as remediation writes and policy
+# publishing.
+router = APIRouter(
+    prefix="/aap",
+    tags=["aap"],
+    dependencies=[Depends(require_tenant_user_mfa)],
+)
 
 
 @router.post("/launch")

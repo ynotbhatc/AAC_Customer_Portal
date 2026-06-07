@@ -6,9 +6,15 @@ Frontend (frontend/src/lib/api.ts:downloadReport) calls:
 Returns 501 until the report generator lands. Plan in
 docs/audit_reports_design.md (Phase 7).
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-router = APIRouter(prefix="/reports", tags=["reports"])
+from ..core.sessions import require_tenant_user
+
+router = APIRouter(
+    prefix="/reports",
+    tags=["reports"],
+    dependencies=[Depends(require_tenant_user)],
+)
 
 
 @router.get("/download")
