@@ -1,5 +1,11 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Literal
+
+
+Trend = Literal["improving", "declining", "stable"]
+Severity = Literal["critical", "high", "medium", "low"]
+RemediationStatus = Literal["open", "in_progress", "resolved"]
 
 
 class ComplianceResult(BaseModel):
@@ -24,6 +30,10 @@ class FrameworkSummary(BaseModel):
     compliant_hosts: int
     total_hosts: int
     last_assessed: datetime
+    # Computed as latest-7-day vs prior-7-day average compliance: a >5pp
+    # gain is "improving", >5pp drop is "declining", anything in between
+    # is "stable". Thresholds picked to filter normal noise.
+    trend: Trend
 
 
 class HostSummary(BaseModel):
@@ -31,6 +41,12 @@ class HostSummary(BaseModel):
     frameworks_assessed: int
     overall_compliance: float
     last_assessed: datetime
+    # Count of failed controls on the host's latest assessment per
+    # framework, summed. Today every failed control counts as
+    # "critical" because the underlying compliance_results.violations
+    # is a list of strings with no severity field. When a structured
+    # severity reaches this table, narrow this to severity = critical.
+    critical_violations: int
 
 
 class ComplianceTrend(BaseModel):
@@ -38,3 +54,16 @@ class ComplianceTrend(BaseModel):
     compliance_percentage: float
     passed_controls: int
     failed_controls: int
+
+
+class RemediationItem(BaseModel):
+    id: str
+    hostname: str
+    framework: str
+    control_id: str
+    description: str
+    severity: Severity
+    status: RemediationStatus
+    assigned_to: str | None = None
+    created_at: datetime
+    updated_at: datetime

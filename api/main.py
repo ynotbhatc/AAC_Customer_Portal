@@ -9,6 +9,7 @@ from src.core.database import get_pool, close_pool
 from src.core.logging import configure_logging
 from src.core.portal_db import get_portal_pool, close_portal_pool
 from src.routers import (
+    aap,
     auth,
     baselines,
     bundles,
@@ -20,6 +21,8 @@ from src.routers import (
     me_mfa,
     policies,
     portal_feed,
+    remediation,
+    reports,
     standard_library,
     tenant_users,
     tenants,
@@ -86,6 +89,12 @@ app.include_router(bundles.public_router, prefix="/api")
 app.include_router(baselines.user_router, prefix="/api")
 app.include_router(baselines.bridge_router, prefix="/api")
 app.include_router(standard_library.router, prefix="/api")
+# Stubs — return 501 so the frontend gets a structured error instead of
+# a silent 404. Replace each with a real implementation as the
+# corresponding feature lands.
+app.include_router(remediation.router, prefix="/api")
+app.include_router(reports.router, prefix="/api")
+app.include_router(aap.router, prefix="/api")
 
 
 @app.get("/health")

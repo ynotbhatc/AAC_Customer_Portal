@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["http://localhost:3000"]
     debug: bool = False
 
+    # Logging — consumed by core.logging.configure_logging.
+    # log_level: DEBUG / INFO / WARNING / ERROR.
+    # log_format: "json" for structured logs (prod), "text" for dev.
+    log_level: str = "INFO"
+    log_format: str = "json"
+
     # Rate limiting (slowapi). Per-IP default applies to every endpoint;
     # tighter per-route limits are applied at the endpoint decorator.
     # Storage defaults to in-memory; set rate_limit_storage_uri to a
