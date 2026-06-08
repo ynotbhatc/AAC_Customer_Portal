@@ -21,3 +21,9 @@ limits==5.8.0
 # never declared, so CI couldn't install them.
 asgi-correlation-id==4.3.4
 python-json-logger==3.3.0
+
+# PDF generation for /reports/download. Pure-Python — no system deps
+# (in contrast to weasyprint's cairo/pango requirements). Output is
+# functional rather than typographically beautiful; for v1 the
+# evidence content matters more than the polish.
+reportlab==4.2.5

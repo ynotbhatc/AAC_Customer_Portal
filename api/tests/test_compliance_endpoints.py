@@ -60,10 +60,10 @@ def client():
 # full state machine + four-eyes invariant).
 
 
-def test_reports_download_returns_501(client):
-    r = client.get("/api/reports/download", params={"framework": "cis_rhel9"})
-    assert r.status_code == 501
-    assert "audit_reports_design" in r.json()["detail"]
+# The 501-stub test for /reports/download was retired when P1 replaced
+# the stub with the real implementation. Behavioral coverage now lives
+# in test_reports_download.py (real-DB integration) +
+# test_report_generator.py (unit tests on the pure generators).
 
 
 def test_aap_launch_returns_501(client):
