@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from asgi_correlation_id import CorrelationIdMiddleware
 
+from src.core.audit_middleware import AuditMiddleware
 from src.core.config import get_settings
 from src.core.database import get_pool, close_pool
 from src.core.logging import configure_logging
@@ -47,6 +48,12 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Audit log: writes a row to system_audit_log for every mutating
+# request and every 4xx/5xx response. Added BEFORE the correlation
+# middleware so the AuditMiddleware sees the correlation_id ContextVar
+# set when it inspects the response.
+app.add_middleware(AuditMiddleware, pool_getter=get_portal_pool)
 
 # asgi-correlation-id: injects X-Request-ID on every request/response
 # so logs from one request can be stitched end-to-end. Added BEFORE
