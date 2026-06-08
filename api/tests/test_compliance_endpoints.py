@@ -66,13 +66,10 @@ def client():
 # test_report_generator.py (unit tests on the pure generators).
 
 
-def test_aap_launch_returns_501(client):
-    r = client.post(
-        "/api/aap/launch",
-        json={"hostname": "h", "framework": "cis_rhel9", "template_id": 1},
-    )
-    assert r.status_code == 501
-    assert "AAP Controller" in r.json()["detail"]
+# The 501-stub test for /aap/launch was retired when P1 replaced the
+# stub with the real implementation. Behavioral coverage now lives in
+# test_aap_launch.py (real-DB integration + tenant scoping) +
+# test_aap_client.py (unit tests on the AAP HTTP client).
 
 
 def test_compliance_results_by_id_route_is_registered():
