@@ -18,6 +18,7 @@ from src.routers import (
     compliance,
     enrollments,
     feeds,
+    host_mappings,
     me,
     me_mfa,
     policies,
@@ -101,6 +102,7 @@ app.include_router(bundles.public_router, prefix="/api")
 app.include_router(baselines.user_router, prefix="/api")
 app.include_router(baselines.bridge_router, prefix="/api")
 app.include_router(standard_library.router, prefix="/api")
+app.include_router(host_mappings.router, prefix="/api")
 # Stubs — return 501 so the frontend gets a structured error instead of
 # a silent 404. Replace each with a real implementation as the
 # corresponding feature lands.
