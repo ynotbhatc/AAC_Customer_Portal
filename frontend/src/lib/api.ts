@@ -709,4 +709,26 @@ export const userPolicyUpstreamDiff = (id: string): Promise<UpstreamDiff> =>
     .get<UpstreamDiff>(`/portal/v1/me/policies/${id}/upstream-diff`)
     .then((r) => r.data);
 
+// ── Host mappings (tenant-admin only; P0-A3) ─────────────────────────
+
+import type {
+  HostMapping,
+  CreateHostMapping,
+} from "../types/host-mapping";
+
+export const userHostMappingsList = (): Promise<HostMapping[]> =>
+  userApi
+    .get<HostMapping[]>("/portal/v1/me/host-mappings")
+    .then((r) => r.data);
+
+export const userHostMappingCreate = (
+  body: CreateHostMapping
+): Promise<HostMapping> =>
+  userApi
+    .post<HostMapping>("/portal/v1/me/host-mappings", body)
+    .then((r) => r.data);
+
+export const userHostMappingDelete = (id: string): Promise<void> =>
+  userApi.delete(`/portal/v1/me/host-mappings/${id}`).then(() => undefined);
+
 export default api;
