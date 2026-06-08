@@ -50,7 +50,11 @@ READ_ENDPOINTS = [
 
 
 WRITE_ENDPOINTS = [
-    ("PATCH", "/api/remediation/abc-123"),
+    # POST is the write surface on /remediation since P0-C — the
+    # earlier PATCH stub was removed. /remediation also has
+    # /submit, /approve, /reject sub-routes; one POST is enough to
+    # pin that the auth gate fires on the write surface.
+    ("POST", "/api/remediation"),
     ("POST", "/api/aap/launch"),
 ]
 

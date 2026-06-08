@@ -54,16 +54,10 @@ def client():
             app.dependency_overrides.pop(dep, None)
 
 
-def test_remediation_list_returns_501(client):
-    r = client.get("/api/remediation")
-    assert r.status_code == 501
-    body = r.json()
-    assert "not implemented" in body["detail"].lower()
-
-
-def test_remediation_patch_returns_501(client):
-    r = client.patch("/api/remediation/abc-123", json={"status": "in_progress"})
-    assert r.status_code == 501
+# The two old 501-stub tests for /remediation were removed when P0-C
+# replaced the stubs with a real implementation. Behavioral coverage
+# now lives in test_remediation_integration.py (real-DB tests for the
+# full state machine + four-eyes invariant).
 
 
 def test_reports_download_returns_501(client):
