@@ -157,3 +157,62 @@ async def test_non_json_response_raises(configured_settings, mock_response_facto
     with patch("httpx.AsyncClient.post", AsyncMock(return_value=resp)):
         with pytest.raises(AapError):
             await launch_job_template(1, {})
+
+
+# ── get_job ──────────────────────────────────────────────────────────
+
+
+async def test_get_job_success_returns_status(configured_settings, mock_response_factory):
+    from src.core.aap_client import get_job
+
+    resp = mock_response_factory(200, {
+        "id": 42,
+        "status": "running",
+        "failed": False,
+        "started": "2026-06-08T12:00:00Z",
+        "url": "/api/v2/jobs/42/",
+    })
+    mock_get = AsyncMock(return_value=resp)
+    with patch("httpx.AsyncClient.get", mock_get):
+        result = await get_job(42)
+
+    assert result["status"] == "running"
+    # GET URL targets the right path
+    assert "/api/v2/jobs/42/" in mock_get.call_args.args[0]
+    # Same bearer auth as launch
+    assert mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer fake-token"
+
+
+async def test_get_job_404_says_not_found(configured_settings, mock_response_factory):
+    from src.core.aap_client import AapError, get_job
+
+    resp = mock_response_factory(404, {"detail": "Not found."})
+    with patch("httpx.AsyncClient.get", AsyncMock(return_value=resp)):
+        with pytest.raises(AapError) as exc:
+            await get_job(404)
+
+    assert "not found" in str(exc.value).lower()
+
+
+async def test_get_job_not_configured_raises(monkeypatch):
+    from src.core.aap_client import AapNotConfigured, get_job
+    from src.core.config import Settings
+
+    monkeypatch.setattr(
+        "src.core.aap_client.get_settings",
+        lambda: Settings(aap_url="", aap_token="t", aap_verify_ssl=True),
+    )
+    with pytest.raises(AapNotConfigured):
+        await get_job(1)
+
+
+async def test_get_job_missing_status_field_raises(configured_settings, mock_response_factory):
+    from src.core.aap_client import AapError, get_job
+
+    # AAP returns 200 but no 'status' — malformed; caller can't
+    # answer "is the job done?"
+    resp = mock_response_factory(200, {"id": 1})
+    with patch("httpx.AsyncClient.get", AsyncMock(return_value=resp)):
+        with pytest.raises(AapError) as exc:
+            await get_job(1)
+    assert "status" in str(exc.value).lower()

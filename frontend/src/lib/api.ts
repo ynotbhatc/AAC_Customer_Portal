@@ -109,11 +109,33 @@ export const downloadReport = async (params: {
   URL.revokeObjectURL(url);
 };
 
+export type AapJobLaunchResponse = {
+  job_id: number;
+  status: string;
+  url: string | null;
+  started_at: string | null;
+};
+
+export type AapJobStatus = {
+  job_id: number;
+  status: string;
+  terminal: boolean;
+  failed: boolean;
+  started: string | null;
+  finished: string | null;
+  elapsed: number | null;
+  url: string | null;
+};
+
 export const launchAssessment = (params: {
   hostname: string;
   framework: string;
   template_id: number;
-}) => api.post("/aap/launch", params).then((r) => r.data);
+}) =>
+  api.post<AapJobLaunchResponse>("/aap/launch", params).then((r) => r.data);
+
+export const getAapJobStatus = (jobId: number) =>
+  api.get<AapJobStatus>(`/aap/jobs/${jobId}`).then((r) => r.data);
 
 // ── Admin: ping (used to validate the admin token on login) ───────────
 export const adminPing = async (): Promise<void> => {
