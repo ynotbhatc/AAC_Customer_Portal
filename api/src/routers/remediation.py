@@ -1,34 +1,53 @@
-"""Remediation router — stub.
+"""Remediation router — real implementation (P0-C).
 
-Frontend (frontend/src/lib/api.ts) calls:
-    GET    /api/remediation              — list items
-    PATCH  /api/remediation/{id}         — update status
+State machine
+=============
 
-These endpoints aren't implemented yet. Returning 501 here so the
-frontend gets a structured "not implemented" error rather than a 404
-(which previously made the page look broken instead of intentionally
-gated).
+    open ──assign──> in_progress ──submit──> pending_approval
+                          ▲                       │
+                          │                       ├──approve──> approved
+                          │                       │
+                          └─reject (audited)──────┘
 
-Implementation plan when ready:
-    - Add `remediation_items` table (id, hostname, framework,
-      control_id, description, severity, status, assigned_to,
-      created_at, updated_at).
-    - On every assessment write, derive open items from failed
-      controls and upsert. Resolve when the next assessment has the
-      same control passing.
-    - Add the approval/four-eyes step the reviewer agent called out:
-      `pending_approval` status between `in_progress` and `resolved`,
-      with `approved_by` recorded in the audit log.
-    - Gate PATCH behind the auth dependency once auth is in place.
+Four-eyes invariant
+===================
+
+The actor who calls POST /{id}/approve MUST be different from the
+actor who called POST /{id}/submit. The DB CHECK constraint
+`four_eyes_separate_actors` (migration 016) enforces this at the
+storage layer so a router bug can't silently bypass it.
+
+Audit
+=====
+
+Every transition writes to two trails:
+
+- system_audit_log (auto, via AuditMiddleware) — security across
+  the whole API
+- remediation_history (this router) — compliance-officer-friendly
+  per-item timeline
+
+Tenant scoping
+==============
+
+Every read filters by `tenant_id = $tenant`. The four-eyes table is
+tenant-owned so no cross-tenant leak path through this surface.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from __future__ import annotations
 
+from typing import Annotated, Any, Literal
+from uuid import UUID
+
+import asyncpg
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
+
+from ..core.portal_db import get_portal_pool
 from ..core.sessions import require_tenant_user, require_tenant_user_mfa
 
-# Read = logged-in user. Writes (PATCH /{id}) require MFA-verified
-# sessions because remediation state changes are accountable actions
-# (control closure feeds the audit log + the eventual four-eyes
-# approval check).
+# All reads require a logged-in user. State-change endpoints
+# additionally require an MFA-verified session — see per-route
+# `dependencies=[Depends(require_tenant_user_mfa)]`.
 router = APIRouter(
     prefix="/remediation",
     tags=["remediation"],
@@ -36,29 +55,454 @@ router = APIRouter(
 )
 
 
-_NOT_IMPLEMENTED = {
-    "detail": (
-        "remediation API is not implemented yet — see "
-        "api/src/routers/remediation.py for the implementation plan"
-    ),
-}
+# ── Models ───────────────────────────────────────────────────────────
 
 
-@router.get("")
+class RemediationItem(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    hostname: str
+    framework: str
+    control_id: str
+    description: str
+    severity: Literal["critical", "high", "medium", "low"]
+    status: Literal["open", "in_progress", "pending_approval", "approved"]
+    assigned_to: UUID | None = None
+    requested_approval_at: Any = None
+    requested_approval_by: UUID | None = None
+    approved_at: Any = None
+    approved_by: UUID | None = None
+    approval_notes: str | None = None
+    created_at: Any
+    updated_at: Any
+
+
+class HistoryEntry(BaseModel):
+    transition: Literal["create", "assign", "submit", "approve", "reject"]
+    from_status: str | None = None
+    to_status: str
+    actor_id: UUID | None = None
+    notes: str | None = None
+    at: Any
+
+
+class CreateItem(BaseModel):
+    hostname: str = Field(..., min_length=1, max_length=255)
+    framework: str = Field(..., min_length=1, max_length=100)
+    control_id: str = Field(..., min_length=1, max_length=100)
+    description: str = Field(..., min_length=1, max_length=2000)
+    severity: Literal["critical", "high", "medium", "low"]
+
+
+class AssignItem(BaseModel):
+    assigned_to: UUID
+
+
+class SubmitItem(BaseModel):
+    notes: str | None = Field(None, max_length=2000)
+
+
+class ApproveItem(BaseModel):
+    notes: str | None = Field(None, max_length=2000)
+
+
+class RejectItem(BaseModel):
+    notes: str = Field(..., min_length=1, max_length=2000, description="rejection requires a reason")
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+async def _record_history(
+    conn: asyncpg.Connection,
+    *,
+    item_id: UUID,
+    actor_id: UUID,
+    transition: str,
+    from_status: str | None,
+    to_status: str,
+    notes: str | None,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO remediation_history
+            (item_id, actor_id, transition, from_status, to_status, notes)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        item_id,
+        actor_id,
+        transition,
+        from_status,
+        to_status,
+        notes,
+    )
+
+
+async def _load_item(
+    pool: asyncpg.Pool,
+    item_id: UUID,
+    tenant_id: UUID,
+) -> dict[str, Any]:
+    """Load a tenant-owned item or 404. Tenant filter prevents
+    cross-tenant id-guessing."""
+    row = await pool.fetchrow(
+        """
+        SELECT * FROM remediation_items
+         WHERE id = $1 AND tenant_id = $2
+        """,
+        item_id,
+        tenant_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="remediation item not found")
+    return dict(row)
+
+
+def _tag_resource(request: Request, item_id: UUID | str) -> None:
+    """Attach (resource_type, resource_id) for the AuditMiddleware."""
+    request.state.audit_resource = ("remediation_item", str(item_id))
+
+
+# ── Routes ───────────────────────────────────────────────────────────
+
+
+@router.get("", response_model=list[RemediationItem])
 async def list_items(
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
     hostname: str | None = None,
-    status_filter: str | None = None,
-    severity: str | None = None,
+    status_filter: Annotated[
+        Literal["open", "in_progress", "pending_approval", "approved"] | None,
+        # Path query param name `status` collides with the imported
+        # starlette status module; expose as `status` to the caller
+        # but bind to status_filter in the function signature.
+        None,
+    ] = None,
+    severity: Literal["critical", "high", "medium", "low"] | None = None,
+    limit: int = 100,
 ):
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=_NOT_IMPLEMENTED["detail"],
+    """List remediation items for the current tenant, optionally
+    filtered by hostname / status / severity."""
+    conditions = ["tenant_id = $1"]
+    args: list[Any] = [user["tenant_id"]]
+    if hostname:
+        args.append(hostname)
+        conditions.append(f"hostname = ${len(args)}")
+    if status_filter:
+        args.append(status_filter)
+        conditions.append(f"status = ${len(args)}")
+    if severity:
+        args.append(severity)
+        conditions.append(f"severity = ${len(args)}")
+    args.append(min(limit, 500))
+
+    rows = await pool.fetch(
+        f"""
+        SELECT * FROM remediation_items
+         WHERE {" AND ".join(conditions)}
+         ORDER BY created_at DESC
+         LIMIT ${len(args)}
+        """,
+        *args,
     )
+    return [dict(r) for r in rows]
 
 
-@router.patch("/{item_id}", dependencies=[Depends(require_tenant_user_mfa)])
-async def update_status(item_id: str):
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=_NOT_IMPLEMENTED["detail"],
+@router.get("/{item_id}", response_model=RemediationItem)
+async def get_item(
+    item_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+):
+    return await _load_item(pool, item_id, user["tenant_id"])
+
+
+@router.get("/{item_id}/history", response_model=list[HistoryEntry])
+async def get_history(
+    item_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+):
+    # Tenant check: only return history if the item belongs to this tenant
+    await _load_item(pool, item_id, user["tenant_id"])
+    rows = await pool.fetch(
+        """
+        SELECT transition, from_status, to_status, actor_id, notes, at
+          FROM remediation_history
+         WHERE item_id = $1
+         ORDER BY at ASC
+        """,
+        item_id,
     )
+    return [dict(r) for r in rows]
+
+
+@router.post(
+    "",
+    response_model=RemediationItem,
+    status_code=201,
+    dependencies=[Depends(require_tenant_user_mfa)],
+)
+async def create_item(
+    body: CreateItem,
+    request: Request,
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+):
+    """Create a new remediation item in `open` state."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO remediation_items
+                    (tenant_id, hostname, framework, control_id,
+                     description, severity, status, created_by, updated_by)
+                VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $7)
+                RETURNING *
+                """,
+                user["tenant_id"],
+                body.hostname,
+                body.framework,
+                body.control_id,
+                body.description,
+                body.severity,
+                user["tenant_user_id"],
+            )
+            await _record_history(
+                conn,
+                item_id=row["id"],
+                actor_id=user["tenant_user_id"],
+                transition="create",
+                from_status=None,
+                to_status="open",
+                notes=None,
+            )
+    _tag_resource(request, row["id"])
+    return dict(row)
+
+
+@router.post(
+    "/{item_id}/assign",
+    response_model=RemediationItem,
+    dependencies=[Depends(require_tenant_user_mfa)],
+)
+async def assign_item(
+    item_id: UUID,
+    body: AssignItem,
+    request: Request,
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+):
+    """`open` → `in_progress`. Assignee must be a tenant_user in the
+    same tenant (FK ensures the user exists; the cross-tenant check
+    is below)."""
+    _tag_resource(request, item_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await _load_item(pool, item_id, user["tenant_id"])
+            if current["status"] != "open":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"item is in status {current['status']!r}; assign only valid from 'open'",
+                )
+            # Cross-tenant assignee check
+            assignee_tenant = await conn.fetchval(
+                "SELECT tenant_id FROM tenant_users WHERE id = $1",
+                body.assigned_to,
+            )
+            if assignee_tenant != user["tenant_id"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="assigned_to user does not exist or belongs to a different tenant",
+                )
+            row = await conn.fetchrow(
+                """
+                UPDATE remediation_items
+                   SET status = 'in_progress',
+                       assigned_to = $1,
+                       updated_at = now(),
+                       updated_by = $2
+                 WHERE id = $3 AND tenant_id = $4
+                 RETURNING *
+                """,
+                body.assigned_to,
+                user["tenant_user_id"],
+                item_id,
+                user["tenant_id"],
+            )
+            await _record_history(
+                conn,
+                item_id=item_id,
+                actor_id=user["tenant_user_id"],
+                transition="assign",
+                from_status="open",
+                to_status="in_progress",
+                notes=None,
+            )
+    return dict(row)
+
+
+@router.post(
+    "/{item_id}/submit",
+    response_model=RemediationItem,
+    dependencies=[Depends(require_tenant_user_mfa)],
+)
+async def submit_item(
+    item_id: UUID,
+    body: SubmitItem,
+    request: Request,
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+):
+    """`in_progress` → `pending_approval`. Records who requested
+    approval so the four-eyes invariant can reject same-actor
+    approval on the next step."""
+    _tag_resource(request, item_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await _load_item(pool, item_id, user["tenant_id"])
+            if current["status"] != "in_progress":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"item is in status {current['status']!r}; submit only valid from 'in_progress'",
+                )
+            row = await conn.fetchrow(
+                """
+                UPDATE remediation_items
+                   SET status = 'pending_approval',
+                       requested_approval_at = now(),
+                       requested_approval_by = $1,
+                       updated_at = now(),
+                       updated_by = $1
+                 WHERE id = $2 AND tenant_id = $3
+                 RETURNING *
+                """,
+                user["tenant_user_id"],
+                item_id,
+                user["tenant_id"],
+            )
+            await _record_history(
+                conn,
+                item_id=item_id,
+                actor_id=user["tenant_user_id"],
+                transition="submit",
+                from_status="in_progress",
+                to_status="pending_approval",
+                notes=body.notes,
+            )
+    return dict(row)
+
+
+@router.post(
+    "/{item_id}/approve",
+    response_model=RemediationItem,
+    dependencies=[Depends(require_tenant_user_mfa)],
+)
+async def approve_item(
+    item_id: UUID,
+    body: ApproveItem,
+    request: Request,
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+):
+    """`pending_approval` → `approved`. Four-eyes: caller must NOT be
+    the requester. Enforced at the router AND at the DB (CHECK
+    constraint on migration 016)."""
+    _tag_resource(request, item_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await _load_item(pool, item_id, user["tenant_id"])
+            if current["status"] != "pending_approval":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"item is in status {current['status']!r}; approve only valid from 'pending_approval'",
+                )
+            if current.get("requested_approval_by") == user["tenant_user_id"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="four-eyes: the user who submitted for approval cannot approve",
+                )
+            row = await conn.fetchrow(
+                """
+                UPDATE remediation_items
+                   SET status = 'approved',
+                       approved_at = now(),
+                       approved_by = $1,
+                       approval_notes = $2,
+                       updated_at = now(),
+                       updated_by = $1
+                 WHERE id = $3 AND tenant_id = $4
+                 RETURNING *
+                """,
+                user["tenant_user_id"],
+                body.notes,
+                item_id,
+                user["tenant_id"],
+            )
+            await _record_history(
+                conn,
+                item_id=item_id,
+                actor_id=user["tenant_user_id"],
+                transition="approve",
+                from_status="pending_approval",
+                to_status="approved",
+                notes=body.notes,
+            )
+    return dict(row)
+
+
+@router.post(
+    "/{item_id}/reject",
+    response_model=RemediationItem,
+    dependencies=[Depends(require_tenant_user_mfa)],
+)
+async def reject_item(
+    item_id: UUID,
+    body: RejectItem,
+    request: Request,
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+):
+    """`pending_approval` → `in_progress`. Rejection requires a
+    reason (model enforces non-empty notes). Also subject to the
+    four-eyes rule: the requester can't reject their own submission
+    — they'd just retract instead, but that's not modeled today."""
+    _tag_resource(request, item_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await _load_item(pool, item_id, user["tenant_id"])
+            if current["status"] != "pending_approval":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"item is in status {current['status']!r}; reject only valid from 'pending_approval'",
+                )
+            if current.get("requested_approval_by") == user["tenant_user_id"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="four-eyes: the user who submitted for approval cannot reject",
+                )
+            row = await conn.fetchrow(
+                """
+                UPDATE remediation_items
+                   SET status = 'in_progress',
+                       requested_approval_at = NULL,
+                       requested_approval_by = NULL,
+                       updated_at = now(),
+                       updated_by = $1
+                 WHERE id = $2 AND tenant_id = $3
+                 RETURNING *
+                """,
+                user["tenant_user_id"],
+                item_id,
+                user["tenant_id"],
+            )
+            await _record_history(
+                conn,
+                item_id=item_id,
+                actor_id=user["tenant_user_id"],
+                transition="reject",
+                from_status="pending_approval",
+                to_status="in_progress",
+                notes=body.notes,
+            )
+    return dict(row)
