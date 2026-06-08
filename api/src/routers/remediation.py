@@ -39,7 +39,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from ..core.portal_db import get_portal_pool
@@ -143,12 +143,46 @@ async def _load_item(
     item_id: UUID,
     tenant_id: UUID,
 ) -> dict[str, Any]:
-    """Load a tenant-owned item or 404. Tenant filter prevents
-    cross-tenant id-guessing."""
+    """Load a tenant-owned item or 404 — for read-only paths only.
+
+    Writers MUST use `_load_item_for_update` (below) inside their
+    transaction connection so the row stays locked between the
+    status check and the UPDATE. This helper opens its own
+    connection from the pool and is therefore unsafe for
+    state-machine transitions — two concurrent transitions could
+    both see the same pre-state and both proceed."""
     row = await pool.fetchrow(
         """
         SELECT * FROM remediation_items
          WHERE id = $1 AND tenant_id = $2
+        """,
+        item_id,
+        tenant_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="remediation item not found")
+    return dict(row)
+
+
+async def _load_item_for_update(
+    conn: asyncpg.Connection,
+    item_id: UUID,
+    tenant_id: UUID,
+) -> dict[str, Any]:
+    """Load + lock a tenant-owned item on the SAME connection.
+
+    Must be called inside `async with conn.transaction():`. The
+    `FOR UPDATE` clause holds the row lock until the transaction
+    commits, so a concurrent transition trying to mutate the same
+    row blocks until we're done. This makes the
+    state-check-then-UPDATE pair atomic — without it, two clients
+    could both observe `open` and both try to assign, producing
+    inconsistent history rows."""
+    row = await conn.fetchrow(
+        """
+        SELECT * FROM remediation_items
+         WHERE id = $1 AND tenant_id = $2
+         FOR UPDATE
         """,
         item_id,
         tenant_id,
@@ -171,15 +205,20 @@ async def list_items(
     user: Annotated[dict[str, Any], Depends(require_tenant_user)],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
     hostname: str | None = None,
+    # The query parameter is named `status` (matches the frontend
+    # client). The local variable is `status_filter` because `status`
+    # collides with the imported starlette status module. Without the
+    # `alias`, `?status=...` was silently ignored — caller had to send
+    # `?status_filter=...` to filter, which nothing did.
     status_filter: Annotated[
         Literal["open", "in_progress", "pending_approval", "approved"] | None,
-        # Path query param name `status` collides with the imported
-        # starlette status module; expose as `status` to the caller
-        # but bind to status_filter in the function signature.
-        None,
+        Query(alias="status"),
     ] = None,
     severity: Literal["critical", "high", "medium", "low"] | None = None,
-    limit: int = 100,
+    # Clamp to [1, 500]. Without the lower bound, `?limit=-1` is a
+    # caller-controlled DoS: Postgres treats `LIMIT -1` as "no
+    # limit" and the whole table comes back over the wire.
+    limit: int = Query(default=100, ge=1, le=500),
 ):
     """List remediation items for the current tenant, optionally
     filtered by hostname / status / severity."""
@@ -194,7 +233,7 @@ async def list_items(
     if severity:
         args.append(severity)
         conditions.append(f"severity = ${len(args)}")
-    args.append(min(limit, 500))
+    args.append(limit)
 
     rows = await pool.fetch(
         f"""
@@ -299,7 +338,7 @@ async def assign_item(
     _tag_resource(request, item_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            current = await _load_item(pool, item_id, user["tenant_id"])
+            current = await _load_item_for_update(conn, item_id, user["tenant_id"])
             if current["status"] != "open":
                 raise HTTPException(
                     status_code=409,
@@ -360,7 +399,7 @@ async def submit_item(
     _tag_resource(request, item_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            current = await _load_item(pool, item_id, user["tenant_id"])
+            current = await _load_item_for_update(conn, item_id, user["tenant_id"])
             if current["status"] != "in_progress":
                 raise HTTPException(
                     status_code=409,
@@ -411,7 +450,7 @@ async def approve_item(
     _tag_resource(request, item_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            current = await _load_item(pool, item_id, user["tenant_id"])
+            current = await _load_item_for_update(conn, item_id, user["tenant_id"])
             if current["status"] != "pending_approval":
                 raise HTTPException(
                     status_code=409,
@@ -470,7 +509,7 @@ async def reject_item(
     _tag_resource(request, item_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            current = await _load_item(pool, item_id, user["tenant_id"])
+            current = await _load_item_for_update(conn, item_id, user["tenant_id"])
             if current["status"] != "pending_approval":
                 raise HTTPException(
                     status_code=409,

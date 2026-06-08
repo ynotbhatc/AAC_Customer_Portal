@@ -77,8 +77,16 @@ async def download_report(
 
     `hostname=foreign` returns the same empty-report shape (no
     info leak about whether that host exists).
+
+    Framework scoping: when the caller filters by framework, pass it
+    through to `allowed_hostnames` so a host mapped *only* for
+    `cis_rhel9` can't be used to pull `iso27001` rows. A mapping
+    with framework=NULL still counts ("all frameworks"); a mapping
+    with a different framework is excluded.
     """
-    allowed = await allowed_hostnames(portal_pool, user["tenant_id"])
+    allowed = await allowed_hostnames(
+        portal_pool, user["tenant_id"], framework=framework,
+    )
     if hostname is not None and hostname not in allowed:
         # Return the empty-shape rather than 403 so caller can't
         # probe other tenants' hostnames.
@@ -118,7 +126,19 @@ async def download_report(
 
     summary = summarize(rows, framework)
 
-    tenant_label = user.get("display_name") or user["email"]
+    # Report header labels this as "Tenant" — so it must be the
+    # tenant's display name, not the user's. Falls back to the user
+    # context only if the tenant row is somehow missing (defensive;
+    # FK constraints make this impossible in practice).
+    tenant_display_name = await portal_pool.fetchval(
+        "SELECT display_name FROM tenants WHERE id = $1::uuid",
+        str(user["tenant_id"]),
+    )
+    tenant_label = (
+        tenant_display_name
+        or user.get("display_name")
+        or user["email"]
+    )
 
     if format == "csv":
         body = render_csv(rows, summary, tenant_label)

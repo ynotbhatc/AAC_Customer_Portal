@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   userHostMappingCreate,
@@ -37,16 +37,22 @@ export default function PortalHostMappingsPage() {
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
 
-  const reload = () => {
+  // Stable identity so react-hooks/exhaustive-deps is satisfied
+  // without re-triggering the effect every render. The eslint rule
+  // is enforced with --max-warnings 0 in CI, so a bare
+  // `useEffect(reload, [])` would fail the lint job.
+  const reload = useCallback(() => {
     setLoading(true);
     setErr(null);
     userHostMappingsList()
       .then(setRows)
       .catch((e) => setErr(extractErr(e)))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(reload, []);
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   const onCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,7 +75,7 @@ export default function PortalHostMappingsPage() {
   };
 
   const onDelete = async (id: string) => {
-    if (!confirm("Remove this host mapping? The tenant will stop seeing compliance data for this host.")) {
+    if (!window.confirm("Remove this host mapping? The tenant will stop seeing compliance data for this host.")) {
       return;
     }
     try {

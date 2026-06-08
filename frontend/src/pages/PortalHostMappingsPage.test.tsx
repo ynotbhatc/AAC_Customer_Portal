@@ -1,14 +1,18 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import PortalHostMappingsPage from "./PortalHostMappingsPage";
 
+// vi.mock must come BEFORE importing the component under test —
+// otherwise the page captures the real api module and the mocks are
+// silently no-ops. Vitest hoists vi.mock calls, but the import order
+// is the readable contract; mirror other portal page tests.
 vi.mock("../lib/api", () => ({
   userHostMappingsList: vi.fn(),
   userHostMappingCreate: vi.fn(),
   userHostMappingDelete: vi.fn(),
 }));
 
+import PortalHostMappingsPage from "./PortalHostMappingsPage";
 import {
   userHostMappingCreate,
   userHostMappingDelete,
@@ -22,10 +26,18 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
+// Preserve + restore window.confirm so stub from one test can't leak
+// into the next worker run.
+const originalConfirm = window.confirm;
+
 beforeEach(() => {
   vi.clearAllMocks();
   // Default: no rows, no errors
   (userHostMappingsList as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+});
+
+afterEach(() => {
+  window.confirm = originalConfirm;
 });
 
 describe("PortalHostMappingsPage", () => {

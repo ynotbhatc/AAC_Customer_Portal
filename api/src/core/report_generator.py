@@ -110,9 +110,16 @@ def render_pdf(rows: list[dict], summary: dict, tenant_label: str) -> bytes:
     Layout:
       Page 1: cover with tenant + framework + generation timestamp
               + roll-up totals + overall compliance %.
-      Pages 2+: per-host table of latest-per-framework compliance %,
-              flagged hosts (sub-threshold) listed with top
-              violations.
+      Pages 2+: a flat detail table of compliance_results rows
+              (hostname / framework / compliance % / failed /
+              evaluation_timestamp), capped at 200 rows. The "more
+              rows truncated" tail row links callers to CSV/JSON for
+              the full set.
+
+    The richer per-host "latest-per-framework with top violations"
+    layout described in `docs/audit_reports_design.md` is a v2 follow-
+    up — this v1 ships a single flat table so the surface is
+    framework-agnostic.
 
     Generated with reportlab — pure Python, no system deps. Output
     is functional; for the typographically-polished signed PDF the

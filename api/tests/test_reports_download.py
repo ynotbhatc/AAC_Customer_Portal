@@ -287,3 +287,157 @@ async def test_filename_defaults_to_all_when_no_framework_filter(seeded, client_
         r = await c.get("/api/reports/download", params={"format": "pdf"})
         cd = r.headers["content-disposition"]
         assert 'filename="aac-report-all.pdf"' in cd
+
+
+# ── Per-framework mapping enforcement ───────────────────────────────
+
+
+async def test_framework_scoped_mapping_blocks_other_frameworks(client_factory, pg_pool):
+    """If a tenant is mapped to host-x ONLY for cis_rhel9, asking for
+    iso27001 must NOT return host-x's iso27001 rows. tenant_host_mapping
+    has a framework column for exactly this scoping — the router has
+    to pass `framework` to `allowed_hostnames`.
+
+    Self-contained (no shared `seeded` fixture) so the per-framework
+    state is unambiguous.
+    """
+    import json as _json
+
+    async with pg_pool.acquire() as conn:
+        # compliance_results table (matches the seeded fixture)
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compliance_results (
+                id                    bigserial PRIMARY KEY,
+                hostname              text NOT NULL,
+                framework             varchar(100) NOT NULL,
+                policy_name           text,
+                policy_version        text,
+                total_controls        int,
+                passed_controls       int,
+                failed_controls       int,
+                compliance_percentage numeric,
+                compliant             boolean,
+                violations            jsonb,
+                metadata              jsonb,
+                evaluation_timestamp  timestamptz NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        await conn.execute("TRUNCATE compliance_results")
+        await conn.execute("TRUNCATE tenant_host_mapping")
+
+        t = await conn.fetchval(
+            "INSERT INTO tenants (display_name, status) VALUES ($1, 'active') RETURNING id",
+            "Tenant Scoped",
+        )
+        u = await conn.fetchval(
+            """INSERT INTO tenant_users (tenant_id, email, role, mfa_required)
+               VALUES ($1, $2, 'account_owner', false) RETURNING id""",
+            t, "scoped@example",
+        )
+        # Map host-x ONLY for cis_rhel9 — explicit framework restriction
+        await conn.execute(
+            "INSERT INTO tenant_host_mapping (tenant_id, hostname, framework) VALUES ($1, $2, $3)",
+            t, "host-x.example", "cis_rhel9",
+        )
+        # Seed both cis_rhel9 (in-scope) and iso27001 (out-of-scope) rows
+        # on the same host
+        for fw in ("cis_rhel9", "iso27001"):
+            await conn.execute(
+                """INSERT INTO compliance_results
+                   (hostname, framework, total_controls, passed_controls,
+                    failed_controls, compliance_percentage, compliant,
+                    violations, metadata)
+                   VALUES ($1, $2, 100, 90, 10, 90.0, false,
+                           $3::jsonb, $4::jsonb)""",
+                "host-x.example", fw,
+                _json.dumps([]), _json.dumps({}),
+            )
+
+    async with client_factory(t, u) as c:
+        # In-scope framework → 1 row
+        r_ok = await c.get(
+            "/api/reports/download",
+            params={"format": "json", "framework": "cis_rhel9"},
+        )
+        assert r_ok.status_code == 200
+        body_ok = json.loads(r_ok.content)
+        assert body_ok["summary"]["row_count"] == 1
+        assert body_ok["results"][0]["framework"] == "cis_rhel9"
+
+        # Out-of-scope framework → 0 rows (host-x is only mapped for cis_rhel9)
+        r_leak = await c.get(
+            "/api/reports/download",
+            params={"format": "json", "framework": "iso27001"},
+        )
+        assert r_leak.status_code == 200
+        body_leak = json.loads(r_leak.content)
+        assert body_leak["summary"]["row_count"] == 0, (
+            "iso27001 rows for host-x leaked through cis_rhel9-only mapping"
+        )
+
+
+async def test_null_framework_mapping_grants_all_frameworks(client_factory, pg_pool):
+    """A mapping with framework=NULL means "all frameworks for this
+    host". Verify both cis_rhel9 and iso27001 queries see the row."""
+    import json as _json
+
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compliance_results (
+                id                    bigserial PRIMARY KEY,
+                hostname              text NOT NULL,
+                framework             varchar(100) NOT NULL,
+                policy_name           text,
+                policy_version        text,
+                total_controls        int,
+                passed_controls       int,
+                failed_controls       int,
+                compliance_percentage numeric,
+                compliant             boolean,
+                violations            jsonb,
+                metadata              jsonb,
+                evaluation_timestamp  timestamptz NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        await conn.execute("TRUNCATE compliance_results")
+        await conn.execute("TRUNCATE tenant_host_mapping")
+
+        t = await conn.fetchval(
+            "INSERT INTO tenants (display_name, status) VALUES ($1, 'active') RETURNING id",
+            "Tenant Allall",
+        )
+        u = await conn.fetchval(
+            """INSERT INTO tenant_users (tenant_id, email, role, mfa_required)
+               VALUES ($1, $2, 'account_owner', false) RETURNING id""",
+            t, "allall@example",
+        )
+        await conn.execute(
+            "INSERT INTO tenant_host_mapping (tenant_id, hostname, framework) VALUES ($1, $2, NULL)",
+            t, "host-all.example",
+        )
+        for fw in ("cis_rhel9", "iso27001"):
+            await conn.execute(
+                """INSERT INTO compliance_results
+                   (hostname, framework, total_controls, passed_controls,
+                    failed_controls, compliance_percentage, compliant,
+                    violations, metadata)
+                   VALUES ($1, $2, 100, 95, 5, 95.0, true,
+                           $3::jsonb, $4::jsonb)""",
+                "host-all.example", fw,
+                _json.dumps([]), _json.dumps({}),
+            )
+
+    async with client_factory(t, u) as c:
+        for fw in ("cis_rhel9", "iso27001"):
+            r = await c.get(
+                "/api/reports/download",
+                params={"format": "json", "framework": fw},
+            )
+            body = json.loads(r.content)
+            assert body["summary"]["row_count"] == 1, (
+                f"NULL-framework mapping should grant {fw} access"
+            )
