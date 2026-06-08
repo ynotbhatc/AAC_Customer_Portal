@@ -210,6 +210,15 @@ export default function PortalHomePage() {
             >
               Baselines
             </button>
+            {me && me.role === "account_owner" ? (
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => navigate("/portal/host-mappings")}
+              >
+                Host mappings
+              </button>
+            ) : null}
             {me && me.mfa_required && !me.mfa_verified ? (
               <span className="text-xs text-amber-700">
                 MFA verification required for upload + fork.
