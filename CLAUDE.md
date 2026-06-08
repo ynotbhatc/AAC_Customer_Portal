@@ -233,6 +233,62 @@ Architecture and repo structure are ours to define. Outside contributors:
 - We are the only reviewers for `api/migrations/`, `api/src/core/`, `.github/workflows/`, and `deploy/`
 - For UX/page work, design docs in `docs/` are the source of truth — implementation follows the design
 
+## Claude Code Skills
+
+Project-level skills live in `.claude/skills/<name>/SKILL.md` and are committed to the repo.
+
+### Current skills
+
+| Skill | Description |
+|-------|-------------|
+| `/api-health-deep` | Cascading health check — nginx → API `/health` → both PG pools → all 3 OPA endpoints; show which layer is degraded |
+| `/nginx-test-headers <url>` | Curl + show every response header (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy); verify the security headers in `frontend/nginx.conf` are actually being applied |
+| `/git-migration-numbering` | Pre-commit check: warn if a migration file isn't strictly N+1 of the prior numbered migration, and if any committed migration is being edited (must add new file instead) |
+
+### Gateway-tech skill catalog (proposed)
+
+These wrap nginx, FastAPI, auth, rate-limit, and OPA gateway operations. Worth building when the operator workflow needs them.
+
+| Proposed skill | What it does |
+|---|---|
+| `/nginx-reload` | Validate config (`nginx -t`), then reload (`nginx -s reload`) — fail-fast that won't drop traffic on a bad config |
+| `/nginx-csp-check` | Test CSP against the frontend dist — fetch index.html, parse script/style/link, verify each is allowed by the policy |
+| `/nginx-rate-limit-test <endpoint>` | Hammer an endpoint at the configured rate-limit threshold and confirm 429 fires |
+| `/api-openapi-dump` | Hit `/openapi.json`, summarize every route (method, path, auth required, body shape) |
+| `/api-route-map` | Show `frontend/src/lib/api.ts` calls vs `api/src/routers/*` registered paths; flag any frontend call to a missing backend route |
+| `/api-test-cors <origin>` | OPTIONS preflight from a given Origin; verify CORS headers |
+| `/portal-login <tenant_id> <email>` | Run the full login flow (POST /portal/v1/auth/login → store session → call /me) |
+| `/portal-session-info` | Decode the current stored session: tenant, user, role, MFA state, expiry |
+| `/portal-mfa-status` | For the current session, show which MFA factors are enrolled + whether `mfa_verified` is set |
+| `/portal-token-revoke <session_id>` | Revoke a session via the admin surface |
+| `/rate-limit-status <key>` | Read current counter/window from rate-limit storage |
+| `/rate-limit-reset <key>` | Clear a single user's rate-limit counter (incident-response use) |
+| `/opa-build-bundle <profile>` | Run validate_demo_bundle.py against a customer profile end-to-end |
+| `/opa-publish-bundle <tenant>` | Trigger a customer-specific bundle publish via `/me/bundles/build` |
+| `/tls-cert-check <host>` | openssl-fetch the cert, show subject + issuer + days-until-expiry |
+| `/webhook-test-bridge <endpoint>` | Send a synthetic payload to one of the portal's bridge endpoints (CVE feed, GitHub mirror, etc.) |
+
+### Git skill catalog
+
+Portal-specific git operations have patterns worth automating: migration numbering, ruleset bypass workflow, npm lock-file sync.
+
+| Proposed skill | What it does |
+|---|---|
+| `/git-migration-numbering` | (Shipped) Pre-commit check for migration file numbering |
+| `/git-npm-lock-check` | Verify `frontend/package.json` and `frontend/package-lock.json` are in sync; emit the `npm install` command needed if not |
+| `/git-ruleset-bypass-workflow` | Walk through the established pattern: add admin to MainBranch bypass_actors → merge → clear bypass. For the operator who's done it once but needs the exact commands again |
+| `/git-pr-status [pr_number]` | Same as the compliance-repo skill: full PR state in one shot |
+| `/git-protected-paths-check` | Same as compliance: warn before committing to `.github/workflows/`, `api/migrations/`, `deploy/` |
+| `/git-find-pr-for-commit <sha>` | Given a commit SHA on main, find which PR introduced it |
+
+### Skills authoring rules
+
+1. **Always resolve file paths via `git rev-parse --show-toplevel`** — skills can be invoked from any working directory
+2. **Use `$1`/`$2` for positional arguments**, not `$0`
+3. **Validate HTTP status codes explicitly** with `-w "%{http_code}" -o /dev/null`
+4. **Keep descriptions specific and front-loaded** — only the description is in context; the body is loaded on invocation
+5. **Use `allowed-tools` frontmatter** to pre-approve Bash commands
+
 ## Documentation pointers
 
 - **FastAPI**: https://fastapi.tiangolo.com/
