@@ -408,12 +408,12 @@ async def test_null_framework_mapping_grants_all_frameworks(client_factory, pg_p
 
         t = await conn.fetchval(
             "INSERT INTO tenants (display_name, status) VALUES ($1, 'active') RETURNING id",
-            "Tenant Allall",
+            "Tenant All",
         )
         u = await conn.fetchval(
             """INSERT INTO tenant_users (tenant_id, email, role, mfa_required)
                VALUES ($1, $2, 'account_owner', false) RETURNING id""",
-            t, "allall@example",
+            t, "all@example",
         )
         await conn.execute(
             "INSERT INTO tenant_host_mapping (tenant_id, hostname, framework) VALUES ($1, $2, NULL)",
