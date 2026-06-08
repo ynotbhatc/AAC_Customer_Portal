@@ -37,7 +37,7 @@ from ..core.sessions import require_tenant_user_mfa
 
 router = APIRouter(
     prefix="/portal/v1/me/host-mappings",
-    tags=["tenant-admin / host mappings"],
+    tags=["portal:host-mappings"],
     dependencies=[
         Depends(require_tenant_user_mfa),
         Depends(require_role("account_owner")),
