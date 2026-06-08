@@ -13,13 +13,16 @@
 -- src/core/tenant_scope.py.
 --
 -- One host can map to multiple tenants (some MSP-style deployments
--- assess shared infrastructure for multiple customers). The
--- composite PRIMARY KEY enforces uniqueness of the triple, not just
--- the hostname.
+-- assess shared infrastructure for multiple customers). A surrogate
+-- `id` is the PK because PostgreSQL doesn't accept function
+-- expressions (COALESCE) in a PRIMARY KEY — we use a functional
+-- unique index instead to fold NULL-framework and same-string
+-- frameworks into one uniqueness bucket.
 
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS tenant_host_mapping (
+    id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id    uuid        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     hostname     text        NOT NULL,
     -- Optional: restrict the mapping to specific frameworks for this
@@ -28,9 +31,15 @@ CREATE TABLE IF NOT EXISTS tenant_host_mapping (
     -- benchmarks per customer.
     framework    text        NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
-    created_by   uuid        REFERENCES tenant_users(id) ON DELETE SET NULL,
-    PRIMARY KEY (tenant_id, hostname, COALESCE(framework, ''))
+    created_by   uuid        REFERENCES tenant_users(id) ON DELETE SET NULL
 );
+
+-- Enforce uniqueness of (tenant, host, framework-or-all). COALESCE
+-- folds NULL framework into '' for the uniqueness comparison so we
+-- can't end up with both (tenant, host, NULL) and (tenant, host, '')
+-- as separate rows.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_tenant_host_framework
+    ON tenant_host_mapping (tenant_id, hostname, COALESCE(framework, ''));
 
 -- Fast lookup of "which hostnames does this tenant see?"
 CREATE INDEX IF NOT EXISTS idx_tenant_host_mapping_tenant
