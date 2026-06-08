@@ -2,32 +2,56 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from ..core.database import get_pool
+from ..core.portal_db import get_portal_pool
 from ..core.sessions import require_tenant_user
+from ..core.tenant_scope import allowed_hostnames
 from ..models.compliance import ComplianceResult, FrameworkSummary, HostSummary, ComplianceTrend
 import asyncpg
 
-# Every endpoint on this router requires a logged-in tenant user.
-# Compliance data is sensitive — read-access was previously
-# unauthenticated, which was the foundation gap the reviewer agent
-# called out. Multi-tenant scoping of the underlying compliance_results
-# table is a follow-on PR (P0-A2); for now the auth wall stops the
-# trivial unauth-read case.
+# Every endpoint on this router requires a logged-in tenant user AND
+# filters results to the hostnames mapped to that tenant in
+# tenant_host_mapping (migration 015). A tenant with no mapped hosts
+# sees an empty result — never another tenant's data.
 router = APIRouter(
     prefix="/compliance",
     tags=["compliance"],
-    dependencies=[Depends(require_tenant_user)],
 )
+
+
+async def _tenant_hostnames(
+    user: Annotated[dict[str, Any], Depends(require_tenant_user)],
+    portal_pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
+) -> list[str]:
+    """Resolve the set of hostnames the current tenant may read.
+
+    Returns a list (asyncpg's `ANY($1)` accepts arrays). Empty list
+    means "tenant has no mapped hosts" — every query should return
+    no rows in that case.
+    """
+    allowed = await allowed_hostnames(portal_pool, user["tenant_id"])
+    return sorted(allowed)
+
+
+TenantHostnamesDep = Annotated[list[str], Depends(_tenant_hostnames)]
 
 
 @router.get("/results", response_model=list[ComplianceResult])
 async def list_results(
+    allowed: TenantHostnamesDep,
     hostname: str | None = None,
     framework: str | None = None,
     limit: int = Query(default=50, le=500),
     pool: asyncpg.Pool = Depends(get_pool),
 ):
-    conditions = []
-    args = []
+    if not allowed:
+        return []
+    # If the caller filters by hostname, it must be in the allowed
+    # set — otherwise they're trying to read another tenant's host.
+    if hostname is not None and hostname not in allowed:
+        return []
+
+    conditions = ["hostname = ANY($1::text[])"]
+    args: list[Any] = [allowed]
     if hostname:
         args.append(hostname)
         conditions.append(f"hostname = ${len(args)}")
@@ -35,8 +59,8 @@ async def list_results(
         args.append(framework)
         conditions.append(f"framework = ${len(args)}")
 
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     args.append(limit)
+    where = "WHERE " + " AND ".join(conditions)
 
     rows = await pool.fetch(
         f"""
@@ -57,13 +81,16 @@ async def list_results(
 @router.get("/results/{result_id}", response_model=ComplianceResult)
 async def get_result(
     result_id: int,
+    allowed: TenantHostnamesDep,
     pool: asyncpg.Pool = Depends(get_pool),
 ):
     """Single compliance result by id — frontend's `getResult(id)`.
 
-    Returns 404 if no such row; previously this path was unrouted and
-    silently 404'd on the framework router level, which hid the gap.
+    Returns 404 if no such row OR if the row belongs to a host the
+    tenant isn't mapped to (no info-leak via id-guessing).
     """
+    if not allowed:
+        raise HTTPException(status_code=404, detail=f"result {result_id} not found")
     row = await pool.fetchrow(
         """
         SELECT id, hostname, framework, policy_name, policy_version,
@@ -71,9 +98,10 @@ async def get_result(
                compliance_percentage, compliant, violations, metadata,
                evaluation_timestamp
         FROM compliance_results
-        WHERE id = $1
+        WHERE id = $1 AND hostname = ANY($2::text[])
         """,
         result_id,
+        allowed,
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"result {result_id} not found")
@@ -81,7 +109,12 @@ async def get_result(
 
 
 @router.get("/frameworks", response_model=list[FrameworkSummary])
-async def list_frameworks(pool: asyncpg.Pool = Depends(get_pool)):
+async def list_frameworks(
+    allowed: TenantHostnamesDep,
+    pool: asyncpg.Pool = Depends(get_pool),
+):
+    if not allowed:
+        return []
     # Trend = latest 7d avg vs prior 7d avg: ≥5pp gain = improving,
     # ≥5pp drop = declining, anything in between = stable. The 5pp
     # threshold filters day-to-day noise.
@@ -102,6 +135,7 @@ async def list_frameworks(pool: asyncpg.Pool = Depends(get_pool)):
                 END AS window
             FROM compliance_results
             WHERE evaluation_timestamp >= NOW() - INTERVAL '14 days'
+              AND hostname = ANY($1::text[])
         ),
         current_window AS (
             SELECT
@@ -141,13 +175,19 @@ async def list_frameworks(pool: asyncpg.Pool = Depends(get_pool)):
         FROM current_window c
         LEFT JOIN prior_window p USING (framework)
         ORDER BY c.framework
-        """
+        """,
+        allowed,
     )
     return [dict(r) for r in rows]
 
 
 @router.get("/hosts", response_model=list[HostSummary])
-async def list_hosts(pool: asyncpg.Pool = Depends(get_pool)):
+async def list_hosts(
+    allowed: TenantHostnamesDep,
+    pool: asyncpg.Pool = Depends(get_pool),
+):
+    if not allowed:
+        return []
     # critical_violations = sum of failed_controls across each host's
     # most recent assessment per framework. Today treats every failed
     # control as "critical" because compliance_results.violations has
@@ -169,6 +209,7 @@ async def list_hosts(pool: asyncpg.Pool = Depends(get_pool)):
                 ) AS rn
             FROM compliance_results
             WHERE evaluation_timestamp >= NOW() - INTERVAL '7 days'
+              AND hostname = ANY($1::text[])
         ),
         latest_per_framework AS (
             SELECT * FROM ranked WHERE rn = 1
@@ -182,7 +223,8 @@ async def list_hosts(pool: asyncpg.Pool = Depends(get_pool)):
         FROM latest_per_framework
         GROUP BY hostname
         ORDER BY critical_violations DESC, overall_compliance ASC
-        """
+        """,
+        allowed,
     )
     return [dict(r) for r in rows]
 
@@ -190,11 +232,20 @@ async def list_hosts(pool: asyncpg.Pool = Depends(get_pool)):
 @router.get("/trend", response_model=list[ComplianceTrend])
 async def get_trend(
     framework: str,
+    allowed: TenantHostnamesDep,
     hostname: str | None = None,
     days: int = Query(default=30, le=365),
     pool: asyncpg.Pool = Depends(get_pool),
 ):
-    args: list = [framework, days]
+    if not allowed:
+        return []
+    # Tenant filter: only their hostnames. If caller also passes a
+    # specific hostname, it must be in the allowed set (otherwise
+    # they're probing another tenant's host).
+    if hostname is not None and hostname not in allowed:
+        return []
+
+    args: list[Any] = [framework, days, allowed]
     host_filter = ""
     if hostname:
         args.append(hostname)
@@ -210,6 +261,7 @@ async def get_trend(
         FROM compliance_results
         WHERE framework = $1
           AND evaluation_timestamp >= NOW() - make_interval(days => $2)
+          AND hostname = ANY($3::text[])
           {host_filter}
         GROUP BY DATE_TRUNC('day', evaluation_timestamp)
         ORDER BY date ASC
