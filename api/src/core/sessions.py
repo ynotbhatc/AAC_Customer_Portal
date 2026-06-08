@@ -204,11 +204,19 @@ async def require_tenant_user(
     Use this on every customer-facing portal endpoint that needs a
     logged-in user. Does NOT enforce MFA — endpoints requiring MFA
     must use `require_tenant_user_mfa` instead.
+
+    Stashes the resolved user on `request.state.tenant_user` so the
+    AuditMiddleware can populate tenant_id / tenant_user_id on
+    system_audit_log rows for this request. See P0-B (#47) for the
+    audit infrastructure this completes.
     """
-    return await _resolve_bearer(request, authorization, pool)
+    user = await _resolve_bearer(request, authorization, pool)
+    request.state.tenant_user = user
+    return user
 
 
 async def require_tenant_user_mfa(
+    request: Request,
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],
 ) -> dict[str, Any]:
     """Stricter version of require_tenant_user that rejects sessions
@@ -218,7 +226,13 @@ async def require_tenant_user_mfa(
     performs sensitive operations. Sessions where mfa_required=true
     are issued with mfa_verified=false; they must POST to
     /auth/totp/verify to flip it on before this dependency will pass.
+
+    `request.state.tenant_user` is already set by require_tenant_user
+    (which we depend on); refresh it here too as a defensive measure
+    in case someone overrides this dep in a test without overriding
+    the parent.
     """
     if tenant_user.get("mfa_required") and not tenant_user.get("mfa_verified"):
         raise HTTPException(status_code=403, detail="mfa verification required")
+    request.state.tenant_user = tenant_user
     return tenant_user
