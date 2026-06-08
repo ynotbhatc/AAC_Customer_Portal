@@ -253,14 +253,14 @@ async def test_aap_5xx_returns_502(seeded, client_factory, monkeypatch):
 
 
 async def test_negative_job_id_returns_404(seeded, client_factory, monkeypatch):
-    """Defense-in-depth — FastAPI parses the int but doesn't bound it.
-    A negative job_id can't exist; refuse without querying AAP."""
+    """FastAPI parses `-1` as a valid int. The router's explicit
+    `job_id <= 0` guard rejects non-positive values BEFORE any AAP
+    call or audit-log lookup. Pin the contract: non-positive → 404,
+    AAP is never touched."""
     async def explode(*a, **kw):
         raise AssertionError("AAP must NOT be queried for negative job_id")
     monkeypatch.setattr("src.routers.aap.get_job", explode)
 
     async with client_factory(seeded["tenant_a"], seeded["owner_a"]) as c:
         r = await c.get("/api/aap/jobs/-1")
-    # FastAPI returns 422 for an invalid int (depends on path parsing);
-    # in our router, valid-but-non-positive returns 404
-    assert r.status_code in (404, 422)
+    assert r.status_code == 404

@@ -21,10 +21,12 @@ MFA: write endpoints require an MFA-verified session (per-route);
 read endpoints (status) only require an authenticated session.
 Matches the read/write split used in remediation + classification.
 
-Audit: every launch logs (resource='aap_job', id=job_id). Status
-polls are reads — they also produce audit rows via the middleware
-but don't tag a resource (avoids spamming the audit timeline with
-the polling tick).
+Audit: every launch logs (resource='aap_job', id=job_id). Successful
+status polls are NOT audited — `AuditMiddleware` only records
+mutations and 4xx/5xx responses, so the polling tick doesn't 10x
+audit volume. A failed poll (404 from foreign-tenant probe,
+502 from AAP outage, etc.) DOES land in `system_audit_log` so the
+security signal isn't lost.
 """
 from __future__ import annotations
 
@@ -217,8 +219,11 @@ async def job_status(
     canceled}. The response includes a `url` linking to AAP's own
     UI for stdout / artifacts (stream-from-portal is v3).
     """
-    # job_id is a positive int per the path validator; reject 0/negative
-    # to keep AAP queries free of weird values
+    # FastAPI's path parser accepts any int (including negative); the
+    # positivity guarantee comes from this explicit guard. AAP job IDs
+    # are bigserial-allocated and always positive, so 0 / negative is
+    # by definition a job that can't exist — surface as 404 without
+    # querying AAP or the audit log.
     if job_id <= 0:
         raise HTTPException(status_code=404, detail="job not found")
 
