@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { userPolicyAuditLog, userPolicyDetail } from "../lib/api";
 import { extractErr } from "../lib/utils";
 import type { AuditLogEntry } from "../types/audit";
+import { AUDIT_ACTIONS } from "../types/auditActions";
 import type { CustomerPolicyDetail } from "../types/policy";
 
 /**
@@ -203,29 +204,31 @@ function ActionBadge({ action }: { action: string }) {
   );
 }
 
-function badgeClass(action: string): string {
+export function badgeClass(action: string): string {
   // Colors group by semantic family so a reviewer can scan the log
-  // visually. Unknown actions fall through to slate — new INSERT
-  // shapes can land without breaking the UI.
-  if (action === "published" || action === "target_approved") {
+  // visually. Action strings come from AUDIT_ACTIONS (canonical
+  // shared with backend). Unknown actions fall through to slate —
+  // new INSERT shapes can land without breaking the UI.
+  if (action === AUDIT_ACTIONS.PUBLISHED || action === AUDIT_ACTIONS.TARGET_APPROVED) {
     return "bg-emerald-100 text-emerald-800";
   }
-  if (action === "target_rejected") {
+  if (action === AUDIT_ACTIONS.TARGET_REJECTED) {
     return "bg-red-100 text-red-800";
   }
-  if (action === "target_edited") {
+  if (action === AUDIT_ACTIONS.TARGET_EDITED) {
     return "bg-amber-100 text-amber-800";
   }
-  if (action.startsWith("bundle_")) {
+  if (action === AUDIT_ACTIONS.BUNDLE_BUILT) {
     return "bg-blue-100 text-blue-800";
   }
   // Workflow / source events — upload, IR extract, Rego generate,
-  // target inheritance on republish.
+  // fork, republish.
   if (
-    action === "policy_uploaded" ||
-    action === "ir_extracted" ||
-    action === "rego_generated" ||
-    action === "target_copied_on_republish"
+    action === AUDIT_ACTIONS.UPLOADED ||
+    action === AUDIT_ACTIONS.IR_EXTRACTED ||
+    action === AUDIT_ACTIONS.REGO_GENERATED ||
+    action === AUDIT_ACTIONS.FORKED ||
+    action === AUDIT_ACTIONS.REPUBLISHED_FROM
   ) {
     return "bg-sky-100 text-sky-800";
   }
