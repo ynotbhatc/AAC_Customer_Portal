@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { userPolicyAuditLog, userPolicyDetail } from "../lib/api";
+import { badgeClass } from "../lib/auditBadge";
 import { extractErr } from "../lib/utils";
 import type { AuditLogEntry } from "../types/audit";
-import { AUDIT_ACTIONS } from "../types/auditActions";
 import type { CustomerPolicyDetail } from "../types/policy";
 
 /**
@@ -204,33 +204,3 @@ function ActionBadge({ action }: { action: string }) {
   );
 }
 
-export function badgeClass(action: string): string {
-  // Colors group by semantic family so a reviewer can scan the log
-  // visually. Action strings come from AUDIT_ACTIONS (canonical
-  // shared with backend). Unknown actions fall through to slate —
-  // new INSERT shapes can land without breaking the UI.
-  if (action === AUDIT_ACTIONS.PUBLISHED || action === AUDIT_ACTIONS.TARGET_APPROVED) {
-    return "bg-emerald-100 text-emerald-800";
-  }
-  if (action === AUDIT_ACTIONS.TARGET_REJECTED) {
-    return "bg-red-100 text-red-800";
-  }
-  if (action === AUDIT_ACTIONS.TARGET_EDITED) {
-    return "bg-amber-100 text-amber-800";
-  }
-  if (action === AUDIT_ACTIONS.BUNDLE_BUILT) {
-    return "bg-blue-100 text-blue-800";
-  }
-  // Workflow / source events — upload, IR extract, Rego generate,
-  // fork, republish.
-  if (
-    action === AUDIT_ACTIONS.UPLOADED ||
-    action === AUDIT_ACTIONS.IR_EXTRACTED ||
-    action === AUDIT_ACTIONS.REGO_GENERATED ||
-    action === AUDIT_ACTIONS.FORKED ||
-    action === AUDIT_ACTIONS.REPUBLISHED_FROM
-  ) {
-    return "bg-sky-100 text-sky-800";
-  }
-  return "bg-slate-100 text-slate-700";
-}

@@ -31,13 +31,13 @@ def _router_files() -> list[Path]:
 def test_enum_lists_only_unique_values():
     """No duplicate action strings — Enum already enforces this, but the
     test makes the invariant visible in case the data model changes."""
-    values = [a.value for a in AuditAction]
+    values = [a.value for a in list(AuditAction)]
     assert len(values) == len(set(values))
 
 
 def test_enum_values_are_snake_case():
     """Strings stored on disk should follow the project convention."""
-    for a in AuditAction:
+    for a in list(AuditAction):
         assert re.fullmatch(r"[a-z][a-z0-9_]*", a.value), (
             f"AuditAction.{a.name} value {a.value!r} is not snake_case"
         )
@@ -74,4 +74,4 @@ def test_no_inline_audit_action_literals_remain_in_routers():
 def test_enum_membership_matches_public_set():
     """ALL_AUDIT_ACTIONS is a documented public surface; it must equal
     the enum value set, so consumers (tests, validators) can rely on it."""
-    assert ALL_AUDIT_ACTIONS == frozenset(a.value for a in AuditAction)
+    assert ALL_AUDIT_ACTIONS == frozenset(a.value for a in list(AuditAction))
