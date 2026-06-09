@@ -219,6 +219,13 @@ export default function PortalHomePage() {
                 Host mappings
               </button>
             ) : null}
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => navigate("/portal/permissions")}
+            >
+              Permissions
+            </button>
             {me && me.mfa_required && !me.mfa_verified ? (
               <span className="text-xs text-amber-700">
                 MFA verification required for upload + fork.

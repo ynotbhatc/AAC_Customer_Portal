@@ -753,4 +753,13 @@ export const userHostMappingCreate = (
 export const userHostMappingDelete = (id: string): Promise<void> =>
   userApi.delete(`/portal/v1/me/host-mappings/${id}`).then(() => undefined);
 
+// ── Permission audit (any role; read-only) ───────────────────────────
+
+import type { PermissionsResponse } from "../types/permissions";
+
+export const userPermissionsGet = (): Promise<PermissionsResponse> =>
+  userApi
+    .get<PermissionsResponse>("/portal/v1/me/permissions")
+    .then((r) => r.data);
+
 export default api;
