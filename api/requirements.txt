@@ -27,3 +27,8 @@ python-json-logger==3.3.0
 # functional rather than typographically beautiful; for v1 the
 # evidence content matters more than the polish.
 reportlab==4.2.5
+
+# Prometheus exposition — counters + histograms exposed at GET /metrics.
+# Pure-Python, single dep. The fastapi-instrumentator wrapper would
+# pull more transitive deps for marginal value over a thin middleware.
+prometheus-client==0.21.0
