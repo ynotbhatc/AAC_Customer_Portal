@@ -43,6 +43,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from ..core.portal_db import get_portal_pool
+from ..core.rbac import require_role
 from ..core.sessions import require_tenant_user, require_tenant_user_mfa
 
 # All reads require a logged-in user. State-change endpoints
@@ -280,7 +281,7 @@ async def get_history(
     "",
     response_model=RemediationItem,
     status_code=201,
-    dependencies=[Depends(require_tenant_user_mfa)],
+    dependencies=[Depends(require_tenant_user_mfa), Depends(require_role("editor"))],
 )
 async def create_item(
     body: CreateItem,
@@ -323,7 +324,7 @@ async def create_item(
 @router.post(
     "/{item_id}/assign",
     response_model=RemediationItem,
-    dependencies=[Depends(require_tenant_user_mfa)],
+    dependencies=[Depends(require_tenant_user_mfa), Depends(require_role("editor"))],
 )
 async def assign_item(
     item_id: UUID,
@@ -384,7 +385,7 @@ async def assign_item(
 @router.post(
     "/{item_id}/submit",
     response_model=RemediationItem,
-    dependencies=[Depends(require_tenant_user_mfa)],
+    dependencies=[Depends(require_tenant_user_mfa), Depends(require_role("editor"))],
 )
 async def submit_item(
     item_id: UUID,
@@ -435,7 +436,7 @@ async def submit_item(
 @router.post(
     "/{item_id}/approve",
     response_model=RemediationItem,
-    dependencies=[Depends(require_tenant_user_mfa)],
+    dependencies=[Depends(require_tenant_user_mfa), Depends(require_role("editor"))],
 )
 async def approve_item(
     item_id: UUID,
@@ -493,7 +494,7 @@ async def approve_item(
 @router.post(
     "/{item_id}/reject",
     response_model=RemediationItem,
-    dependencies=[Depends(require_tenant_user_mfa)],
+    dependencies=[Depends(require_tenant_user_mfa), Depends(require_role("editor"))],
 )
 async def reject_item(
     item_id: UUID,

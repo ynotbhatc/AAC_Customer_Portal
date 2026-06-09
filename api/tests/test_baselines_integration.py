@@ -63,7 +63,7 @@ async def seeded(pg_pool):
 async def user_client_for(pg_pool):
     from main import app
     from src.core.portal_db import get_portal_pool
-    from src.core.sessions import require_tenant_user_mfa
+    from src.core.sessions import require_tenant_user, require_tenant_user_mfa
 
     async def _get_pool():
         return pg_pool
@@ -73,11 +73,13 @@ async def user_client_for(pg_pool):
             return {
                 "tenant_id": tenant_id,
                 "tenant_user_id": user_id,
+                "role": "editor",
                 "mfa_required": False,
                 "mfa_verified": True,
             }
 
         app.dependency_overrides[get_portal_pool] = _get_pool
+        app.dependency_overrides[require_tenant_user] = _fake_user
         app.dependency_overrides[require_tenant_user_mfa] = _fake_user
         transport = ASGITransport(app=app)
         return AsyncClient(transport=transport, base_url="http://test")

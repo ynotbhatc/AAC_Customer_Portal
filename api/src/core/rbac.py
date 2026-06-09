@@ -91,7 +91,14 @@ def require_role(min_role: str) -> Callable[..., Coroutine[Any, Any, dict[str, A
         tenant_user: dict[str, Any] = Depends(require_tenant_user),
     ) -> dict[str, Any]:
         actor_role = tenant_user.get("role")
-        if not actor_role or not has_role(actor_role, min_role):
+        # Fail closed on unknown role strings — a session whose role
+        # doesn't map into the hierarchy is treated as insufficient,
+        # not as elevated or as a 500.
+        try:
+            ok = bool(actor_role) and has_role(actor_role, min_role)
+        except ValueError:
+            ok = False
+        if not ok:
             raise HTTPException(
                 status_code=403,
                 detail=f"requires role >= {min_role}",

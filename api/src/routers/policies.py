@@ -48,6 +48,7 @@ from ..core.ir_extractor import (
 )
 from ..core.llm_client import LlmError, get_llm_client
 from ..core.portal_db import get_portal_pool
+from ..core.rbac import require_role
 from ..core.rego_generator import GeneratedRego, generate_targets
 from ..core.rego_validator import OpaBinaryMissing, OpaVersionTooOld
 from ..core.sessions import require_tenant_user_mfa
@@ -81,7 +82,12 @@ from ..core.rego_validator import opa_check
 router = APIRouter(prefix="/portal/v1/me/policies", tags=["portal:policies"])
 
 
-@router.post("/upload", response_model=UploadAccepted, status_code=201)
+@router.post(
+    "/upload",
+    response_model=UploadAccepted,
+    status_code=201,
+    dependencies=[Depends(require_role("editor"))],
+)
 async def upload_policy(
     request: Request,
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
@@ -266,6 +272,7 @@ async def get_policy(
     "/{policy_id}/extract-ir",
     response_model=IRExtractionResponse,
     status_code=200,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def extract_policy_ir(
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
@@ -388,6 +395,7 @@ async def extract_policy_ir(
     "/{policy_id}/generate-rego",
     response_model=RegoGenerationResponse,
     status_code=200,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def generate_policy_rego(
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
@@ -571,6 +579,7 @@ async def generate_policy_rego(
     "/{policy_id}/publish",
     response_model=None,
     status_code=200,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def publish_policy(
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
@@ -698,6 +707,7 @@ def _infer_target_system(path: str) -> str:
     "/fork",
     response_model=ForkResponse,
     status_code=201,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def fork_standard_policy(
     body: ForkRequest,
@@ -1001,6 +1011,7 @@ async def get_policy_target(
 @router.patch(
     "/{policy_id}/targets/{target_id}",
     response_model=TargetDetail,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def edit_policy_target(
     body: TargetEditRequest,
@@ -1107,6 +1118,7 @@ async def edit_policy_target(
 @router.post(
     "/{policy_id}/targets/{target_id}/approve",
     response_model=TargetSummary,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def approve_policy_target(
     body: TargetReviewAction,
@@ -1174,6 +1186,7 @@ async def approve_policy_target(
 @router.post(
     "/{policy_id}/targets/{target_id}/reject",
     response_model=TargetSummary,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def reject_policy_target(
     body: TargetReviewAction,
@@ -1251,6 +1264,7 @@ from ..core.semver_util import bump_patch as _bump_patch  # noqa: E402
     "/{policy_id}/republish",
     response_model=RepublishResponse,
     status_code=201,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def republish_policy(
     body: RepublishRequest,

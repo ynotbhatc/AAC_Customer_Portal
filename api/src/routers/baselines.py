@@ -29,6 +29,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from ..core.portal_db import get_portal_pool
+from ..core.rbac import require_role
 from ..core.sessions import require_tenant_user_mfa
 from ..core.tenant_auth import BASELINE_PUSH_SCOPE, require_tenant_with_scope
 from ..models.baseline import (
@@ -165,6 +166,7 @@ async def get_baseline(
     "",
     response_model=BaselineSnapshotDetail,
     status_code=201,
+    dependencies=[Depends(require_role("editor"))],
 )
 async def manual_import_baseline(
     body: BaselineIngestRequest,
