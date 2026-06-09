@@ -1,19 +1,30 @@
 FROM registry.access.redhat.com/ubi9/python-311:latest
 
 USER 0
+# OPA binary is pinned by version AND SHA256 so the build fails closed if
+# the upstream binary is tampered with or silently replaced. When bumping
+# OPA_VERSION, also update OPA_SHA256 from the canonical checksum at
+# https://openpolicyagent.org/downloads/<version>/opa_linux_amd64_static.sha256.
+ARG OPA_VERSION=v1.8.0
+ARG OPA_SHA256=1359b1bff233fc0a290066e864c75b8158e52756319757b6854df467fe7fc146
 RUN curl -sSL -o /usr/local/bin/opa \
-        https://openpolicyagent.org/downloads/v1.8.0/opa_linux_amd64_static && \
+        https://openpolicyagent.org/downloads/${OPA_VERSION}/opa_linux_amd64_static && \
+    echo "${OPA_SHA256}  /usr/local/bin/opa" | sha256sum -c - && \
     chmod +x /usr/local/bin/opa && \
     /usr/local/bin/opa version
 
 # Snapshot of the operator's Rego policy library (Path B — fork-and-tweak).
-# Pin a specific tag in production; depth=1 keeps the image small.
-# Build-time tag override:  podman build --build-arg STANDARD_LIBRARY_REF=v2.1.0 .
-ARG STANDARD_LIBRARY_REF=main
-RUN git clone --depth 1 --branch ${STANDARD_LIBRARY_REF} \
-        https://github.com/ynotbhatc/rego_policy_libraries.git \
-        /standard-library && \
-    cd /standard-library && git rev-parse --short HEAD > /standard-library.version
+# Default to a pinned commit SHA so production builds are byte-reproducible
+# and resistant to upstream-history rewrites. Override at build time to
+# roll forward:  podman build --build-arg STANDARD_LIBRARY_REF=<sha|tag|branch>
+# (init + fetch-by-ref also accepts tags and branches, not only SHAs).
+ARG STANDARD_LIBRARY_REF=f861783191cf65b00f2a1b5a19609be1c5d99729
+RUN git init /standard-library && \
+    cd /standard-library && \
+    git remote add origin https://github.com/ynotbhatc/rego_policy_libraries.git && \
+    git fetch --depth 1 origin ${STANDARD_LIBRARY_REF} && \
+    git checkout FETCH_HEAD && \
+    git rev-parse --short HEAD > /standard-library.version
 USER 1001
 
 WORKDIR /app

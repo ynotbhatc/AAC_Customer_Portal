@@ -86,8 +86,8 @@ PR. The Copilot review (this thread) names the exact endpoints.
 
 | Item | Today | Trigger | Production target |
 |------|-------|---------|-------------------|
-| OPA binary download | 🔴 No checksum verification (Containerfile:4-7) | Pre-customer | 🟢 Pinned SHA256 |
-| Standard library clone | 🔴 Tracks moving `main` branch (Containerfile:12-16) | Pre-customer | 🟢 Pinned commit SHA |
+| OPA binary download | 🟢 SHA256-verified at build (`api/Containerfile`) | done | done |
+| Standard library clone | 🟢 Pinned to commit SHA, init+fetch-by-ref (`api/Containerfile`) | done | done |
 | Frontend SAST | 🔴 None | First SOC 2 audit | 🟢 `npm audit` in CI + `snyk` or equivalent |
 | Backend SAST | 🔴 None | First SOC 2 audit | 🟢 `bandit` in CI |
 | Container image signing | 🔴 None | First FedRAMP tenant | 🟢 Cosign-signed images |
