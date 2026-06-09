@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from asgi_correlation_id import CorrelationIdMiddleware
 
@@ -8,6 +9,7 @@ from src.core.audit_middleware import AuditMiddleware
 from src.core.config import get_settings
 from src.core.database import get_pool, close_pool
 from src.core.logging import configure_logging
+from src.core.metrics import MetricsMiddleware, metrics_response
 from src.core.portal_db import get_portal_pool, close_portal_pool
 from src.routers import (
     aap,
@@ -49,6 +51,12 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Prometheus exposition — records one counter + one histogram
+# observation per request. Added FIRST (= outermost) so the timing
+# reflects the wall-clock duration including all downstream
+# middleware (audit log, correlation ID, CORS preflight, etc.).
+app.add_middleware(MetricsMiddleware)
 
 # Audit log: writes a row to system_audit_log for every mutating
 # request and every 4xx/5xx response. Added BEFORE the correlation
@@ -109,6 +117,35 @@ app.include_router(host_mappings.router, prefix="/api")
 app.include_router(remediation.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(aap.router, prefix="/api")
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics(
+    x_metrics_token: Optional[str] = Header(default=None, alias="X-Metrics-Token"),
+):
+    """Prometheus exposition.
+
+    When `METRICS_TOKEN` is set in the deployment environment, callers
+    MUST present the matching `X-Metrics-Token` header. Otherwise the
+    endpoint is open — appropriate for in-cluster Prometheus scraping
+    where network isolation is the perimeter. Settings exposes the
+    config flag so a deployment doesn't have to touch source code to
+    add the gate.
+
+    Read settings inside the handler (not from the module-level `settings`
+    binding captured at import) so tests can monkeypatch the env +
+    clear the `get_settings` lru_cache without reloading the app.
+    """
+    expected = get_settings().metrics_token
+    if expected:
+        # Constant-time compare — even though this token is operator-
+        # supplied rather than user-supplied, treating it like any
+        # other shared secret avoids ad-hoc timing channels.
+        from hmac import compare_digest
+
+        if not x_metrics_token or not compare_digest(x_metrics_token, expected):
+            raise HTTPException(status_code=401, detail="invalid metrics token")
+    return metrics_response()
 
 
 @app.get("/health")

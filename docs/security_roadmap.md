@@ -100,7 +100,7 @@ PR. The Copilot review (this thread) names the exact endpoints.
 | TLS verify off default for AAP | 🟢 Default `True` (PR #37) | done | done |
 | Rate limiting on auth | 🟢 10/min login, 5/min reset-confirm (PR #39) | done | done |
 | Structured logging + correlation IDs | 🟢 JSON via `python-json-logger`, X-Request-ID middleware (PR #40) | done | done |
-| `/metrics` Prometheus endpoint | 🟡 None — logs only | First customer onboard | 🟢 `/metrics` with at minimum request rate, p50/p95/p99 latency, 4xx/5xx counts |
+| `/metrics` Prometheus endpoint | 🟢 `portal_http_requests_total{method,route,status_code}` counter + `portal_http_request_duration_seconds{method,route}` histogram. Route label uses the FastAPI template (cardinality-safe). Optional `X-Metrics-Token` gate via `METRICS_TOKEN` env. | done | done |
 | Alerting on 5xx spike | 🔴 None — depends on log aggregator | First customer onboard | 🟢 Aggregator-side alerts; runbook |
 
 ### Database

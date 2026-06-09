@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # Operator-admin bearer token (gates tenant/token admin endpoints)
     portal_admin_token: str = ""
 
+    # Prometheus scrape token. Empty default → /metrics is unauthenticated,
+    # appropriate for in-cluster scraping with network isolation. Set in
+    # the deployment env to require X-Metrics-Token on /metrics requests.
+    metrics_token: str = ""
+
     # Tenant-user session policy
     session_lifetime_hours: int = 12          # session expires after this
     password_reset_lifetime_hours: int = 24   # reset link valid window
