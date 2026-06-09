@@ -96,8 +96,9 @@ export default function PortalResetPasswordPage() {
               </div>
             ) : null}
             <div>
-              <label className="label">Reset token</label>
+              <label htmlFor="reset-token" className="label">Reset token</label>
               <input
+                id="reset-token"
                 className="input font-mono text-xs"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
@@ -106,8 +107,11 @@ export default function PortalResetPasswordPage() {
             </div>
 
             <div>
-              <label className="label">New password</label>
+              <label htmlFor="reset-new-password" className="label">
+                New password
+              </label>
               <input
+                id="reset-new-password"
                 className="input"
                 type="password"
                 autoComplete="new-password"
@@ -123,8 +127,11 @@ export default function PortalResetPasswordPage() {
             </div>
 
             <div>
-              <label className="label">Confirm new password</label>
+              <label htmlFor="reset-confirm-password" className="label">
+                Confirm new password
+              </label>
               <input
+                id="reset-confirm-password"
                 className="input"
                 type="password"
                 autoComplete="new-password"
