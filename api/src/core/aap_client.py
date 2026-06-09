@@ -72,8 +72,12 @@ async def launch_job_template(
             "AAP integration not configured — set AAP_URL and AAP_TOKEN."
         )
 
+    # int() coerce at URL-construction time so static analysis
+    # (py/partial-ssrf) can prove the path segment is integral —
+    # FastAPI already enforces int typing on the inbound side, this
+    # is the defense-in-depth at the outbound boundary.
     url = settings.aap_url.rstrip("/") + _LAUNCH_PATH_TMPL.format(
-        template_id=template_id
+        template_id=int(template_id)
     )
     headers = {
         "Authorization": f"Bearer {settings.aap_token}",
@@ -145,7 +149,7 @@ async def get_job(
             "AAP integration not configured — set AAP_URL and AAP_TOKEN."
         )
 
-    url = settings.aap_url.rstrip("/") + _JOB_PATH_TMPL.format(job_id=job_id)
+    url = settings.aap_url.rstrip("/") + _JOB_PATH_TMPL.format(job_id=int(job_id))
     headers = {
         "Authorization": f"Bearer {settings.aap_token}",
         "Accept": "application/json",
