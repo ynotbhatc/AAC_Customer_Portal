@@ -36,6 +36,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 
+from ..core.audit_actions import AuditAction
 from ..core.bundle_builder import build_tenant_bundle
 from ..core.bundle_signer import (
     SigningKeyMissing,
@@ -138,10 +139,10 @@ async def build_bundle(
             )
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, action, details)
-                VALUES ($1, $2, 'bundle_built',
+                VALUES ($1, $2, '{AuditAction.BUNDLE_BUILT.value}',
                         jsonb_build_object(
                             'bundle_sha256', $3::text,
                             'target_count',  $4::int,

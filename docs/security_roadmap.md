@@ -80,7 +80,7 @@ PR. The Copilot review (this thread) names the exact endpoints.
 | `policy_audit_log` immutability | 🟡 Schema says append-only; no DB-level trigger | First SOC 2 audit | 🟢 `BEFORE UPDATE / DELETE` deny triggers |
 | `baseline_snapshots` immutability | 🟡 Same — no trigger | First SOC 2 audit | 🟢 Trigger |
 | Retention / legal hold | 🔴 No policy | First SOC 2 audit | 🟢 Per-table TTL config + legal-hold flag |
-| Audit action taxonomy | 🟡 Backend writes `uploaded`; UI badges expect `policy_uploaded`. Mismatch in places. | Pre-customer | 🟢 Single source of truth (enum module shared by both sides) + test |
+| Audit action taxonomy | 🟢 Canonical enum in `api/src/core/audit_actions.py` mirrored in `frontend/src/types/auditActions.ts`; coverage tests on both sides | done | done |
 
 ### Supply chain
 

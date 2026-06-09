@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { userPolicyAuditLog, userPolicyDetail } from "../lib/api";
+import { badgeClass } from "../lib/auditBadge";
 import { extractErr } from "../lib/utils";
 import type { AuditLogEntry } from "../types/audit";
 import type { CustomerPolicyDetail } from "../types/policy";
@@ -203,31 +204,3 @@ function ActionBadge({ action }: { action: string }) {
   );
 }
 
-function badgeClass(action: string): string {
-  // Colors group by semantic family so a reviewer can scan the log
-  // visually. Unknown actions fall through to slate — new INSERT
-  // shapes can land without breaking the UI.
-  if (action === "published" || action === "target_approved") {
-    return "bg-emerald-100 text-emerald-800";
-  }
-  if (action === "target_rejected") {
-    return "bg-red-100 text-red-800";
-  }
-  if (action === "target_edited") {
-    return "bg-amber-100 text-amber-800";
-  }
-  if (action.startsWith("bundle_")) {
-    return "bg-blue-100 text-blue-800";
-  }
-  // Workflow / source events — upload, IR extract, Rego generate,
-  // target inheritance on republish.
-  if (
-    action === "policy_uploaded" ||
-    action === "ir_extracted" ||
-    action === "rego_generated" ||
-    action === "target_copied_on_republish"
-  ) {
-    return "bg-sky-100 text-sky-800";
-  }
-  return "bg-slate-100 text-slate-700";
-}

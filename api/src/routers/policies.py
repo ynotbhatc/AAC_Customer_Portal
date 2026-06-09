@@ -31,6 +31,7 @@ import difflib
 import hashlib
 import json
 
+from ..core.audit_actions import AuditAction
 from ..core.bundle_store import get_bundle_store
 from ..core.config import get_settings
 from ..core.document_parser import (
@@ -177,11 +178,11 @@ async def upload_policy(
             )
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'uploaded',
+                VALUES ($1, $2, $3, '{AuditAction.UPLOADED.value}',
                         jsonb_build_object(
                             'upload_id', $4::text,
                             'filename', $5::text,
@@ -349,11 +350,11 @@ async def extract_policy_ir(
                 tenant_user["tenant_id"],
             )
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'ir_extracted',
+                VALUES ($1, $2, $3, '{AuditAction.IR_EXTRACTED.value}',
                         jsonb_build_object(
                             'model', $4::text,
                             'control_count', $5::int,
@@ -535,11 +536,11 @@ async def generate_policy_rego(
 
             # Single audit-log line for the batch.
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'rego_generated',
+                VALUES ($1, $2, $3, '{AuditAction.REGO_GENERATED.value}',
                         jsonb_build_object(
                             'targets_generated', $4::int,
                             'targets_pending', $5::int,
@@ -640,11 +641,11 @@ async def publish_policy(
             )
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'published',
+                VALUES ($1, $2, $3, '{AuditAction.PUBLISHED.value}',
                         jsonb_build_object(
                             'approved_targets', $4::int,
                             'version_semver', $5::text))
@@ -765,11 +766,11 @@ async def fork_standard_policy(
             )
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'forked',
+                VALUES ($1, $2, $3, '{AuditAction.FORKED.value}',
                         jsonb_build_object(
                             'parent_standard_ref', $4::text,
                             'parent_standard_version', $5::text,
@@ -1080,11 +1081,11 @@ async def edit_policy_target(
             )
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'target_edited',
+                VALUES ($1, $2, $3, '{AuditAction.TARGET_EDITED.value}',
                         jsonb_build_object(
                             'target_id', $4::text,
                             'prior_review_status', $5::text,
@@ -1149,11 +1150,11 @@ async def approve_policy_target(
                 raise HTTPException(status_code=404, detail="target not found")
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'target_approved',
+                VALUES ($1, $2, $3, '{AuditAction.TARGET_APPROVED.value}',
                         jsonb_build_object(
                             'target_id', $4::text,
                             'sha256', $5::text,
@@ -1219,11 +1220,11 @@ async def reject_policy_target(
                 raise HTTPException(status_code=404, detail="target not found")
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'target_rejected',
+                VALUES ($1, $2, $3, '{AuditAction.TARGET_REJECTED.value}',
                         jsonb_build_object(
                             'target_id', $4::text,
                             'sha256', $5::text,
@@ -1373,11 +1374,11 @@ async def republish_policy(
             )
 
             await conn.execute(
-                """
+                f"""
                 INSERT INTO policy_audit_log
                     (tenant_id, tenant_user_id, customer_policy_id,
                      action, details)
-                VALUES ($1, $2, $3, 'republished_from',
+                VALUES ($1, $2, $3, '{AuditAction.REPUBLISHED_FROM.value}',
                         jsonb_build_object(
                             'parent_policy_id', $4::text,
                             'parent_version_semver', $5::text,
