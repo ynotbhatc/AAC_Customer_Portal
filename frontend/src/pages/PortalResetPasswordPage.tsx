@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { userPasswordResetConfirm } from "../lib/api";
 import { extractErr } from "../lib/utils";
 
@@ -8,23 +8,44 @@ import { extractErr } from "../lib/utils";
  *
  * Operator runs POST /admin/v1/tenants/{tid}/users/{uid}/issue-password-reset
  * which returns a one-time reset_token. They hand it OOB to the user;
- * the user hits this page, sets a new password, and is bounced to the
- * login page to sign in fresh.
+ * the user hits this page, pastes the token, sets a new password, and
+ * is bounced to the login page to sign in fresh.
  *
- * Either accepts the token via a `?token=` query param (deep link from
- * the operator's hand-off email) or via a paste field. The query-param
- * path lets operators send `https://portal.example.com/portal/reset-password?token=…`
- * directly.
+ * Tokens are NEVER accepted from the URL — see
+ * docs/security_roadmap.md ("Reset token in URL query param"). URL
+ * query strings end up in browser history and any outbound Referer
+ * header, which is a credential leak vector. If a legacy email link
+ * lands here with `?token=…`, the page strips it before any subrequest
+ * fires (history.replaceState) and surfaces a notice asking the user
+ * to paste the token from the operator's hand-off message.
  */
 export default function PortalResetPasswordPage() {
   const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const [token, setToken] = useState(params.get("token") ?? "");
+  const [token, setToken] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [stripped, setStripped] = useState(false);
+
+  // Strip a legacy `?token=` deep-link from the URL before any
+  // subrequest (image, analytics, etc.) leaks it via Referer.
+  // useEffect runs synchronously after the first commit, before the
+  // browser paints — early enough for typical resources, late enough
+  // that we can safely call history.replaceState.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("token")) {
+      params.delete("token");
+      const qs = params.toString();
+      const url =
+        window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash;
+      window.history.replaceState(null, "", url);
+      setStripped(true);
+    }
+  }, []);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +89,12 @@ export default function PortalResetPasswordPage() {
           </div>
         ) : (
           <>
+            {stripped ? (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                For security, this page no longer accepts reset tokens from the
+                URL. Paste the token your operator sent you below.
+              </div>
+            ) : null}
             <div>
               <label className="label">Reset token</label>
               <input

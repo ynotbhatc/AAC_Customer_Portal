@@ -52,7 +52,7 @@ to `openbao`. The call sites and database schema don't move.
 |------|-------|---------|-------------------|
 | Operator + user tokens in localStorage | 🔴 Vulnerable to XSS exfiltration | First customer onboard | 🟢 `__Host-` HttpOnly + Secure + SameSite=Lax cookies |
 | CSRF protection on state-changing endpoints | 🔴 None | First customer onboard | 🟢 Double-submit cookie pattern |
-| Reset token in URL query param | 🔴 Logged in history / Referer | First customer onboard | 🟢 POST body only |
+| Reset token in URL query param | 🟢 URL `?token=` stripped on mount via `history.replaceState`; input no longer pre-fills from URL; only POST body carries the token | done | done |
 | Logout-everywhere | 🟡 Works server-side; UI message is misleading | First SOC 2 audit | 🟢 UI rewording + audit-log entry |
 
 **Design:** `docs/design_auth_cookies.md`
