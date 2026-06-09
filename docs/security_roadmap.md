@@ -67,7 +67,7 @@ delay is sequencing, not capability.
 |------|-------|---------|-------------------|
 | `require_role(...)` enforced on mutating endpoints | 🟢 Editor gates on all tenant-user writes: policies (×9), bundles, AAP launch, baselines, remediation (×5). `account_owner` retained on host-mappings. | done | done |
 | Separation of duties — approve + publish | 🟡 Same user can approve a target and publish the policy | First SOC 2 audit | 🟢 Optional "4-eyes" policy per tenant |
-| Permission audit reporting | 🔴 No "who can do what" report | First customer onboard | 🟢 Read-only API + UI showing role grants |
+| Permission audit reporting | 🟢 `GET /me/permissions` returns tenant roster + role-capability matrix; `PortalPermissionsPage.tsx` renders both, highlighting the caller's row | done | done |
 
 **Note:** RBAC is a tactical fix — `Depends(require_role("editor"))`
 on the right endpoints. No design doc needed; just an implementation

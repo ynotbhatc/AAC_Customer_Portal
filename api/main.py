@@ -23,6 +23,7 @@ from src.routers import (
     host_mappings,
     me,
     me_mfa,
+    permissions,
     policies,
     portal_feed,
     remediation,
@@ -103,6 +104,7 @@ app.include_router(portal_feed.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
 app.include_router(me_mfa.router, prefix="/api")
+app.include_router(permissions.router, prefix="/api")
 app.include_router(policies.router, prefix="/api")
 app.include_router(bundles.user_router, prefix="/api")
 app.include_router(bundles.bridge_router, prefix="/api")
