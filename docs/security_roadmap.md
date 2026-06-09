@@ -65,7 +65,7 @@ delay is sequencing, not capability.
 
 | Item | Today | Trigger | Production target |
 |------|-------|---------|-------------------|
-| `require_role(...)` enforced on mutating endpoints | 🔴 `require_role` exists; only `require_tenant_user_mfa` is wired | First customer onboard | 🟢 Editor / account_owner gates on all writes |
+| `require_role(...)` enforced on mutating endpoints | 🟢 Editor gates on all tenant-user writes: policies (×9), bundles, AAP launch, baselines, remediation (×5). `account_owner` retained on host-mappings. | done | done |
 | Separation of duties — approve + publish | 🟡 Same user can approve a target and publish the policy | First SOC 2 audit | 🟢 Optional "4-eyes" policy per tenant |
 | Permission audit reporting | 🔴 No "who can do what" report | First customer onboard | 🟢 Read-only API + UI showing role grants |
 

@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 
 from ..core.audit_actions import AuditAction
 from ..core.bundle_builder import build_tenant_bundle
+from ..core.rbac import require_role
 from ..core.bundle_signer import (
     SigningKeyMissing,
     public_key_b64,
@@ -62,7 +63,12 @@ from ..models.policy_bundle import (
 user_router = APIRouter(prefix="/portal/v1/me/bundles", tags=["portal:bundles"])
 
 
-@user_router.post("/build", response_model=BuildBundleResponse, status_code=201)
+@user_router.post(
+    "/build",
+    response_model=BuildBundleResponse,
+    status_code=201,
+    dependencies=[Depends(require_role("editor"))],
+)
 async def build_bundle(
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user_mfa)],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],

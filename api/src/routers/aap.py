@@ -43,6 +43,7 @@ from ..core.aap_client import (
     launch_job_template,
 )
 from ..core.portal_db import get_portal_pool
+from ..core.rbac import require_role
 from ..core.sessions import require_tenant_user, require_tenant_user_mfa
 from ..core.tenant_scope import allowed_hostnames
 
@@ -99,7 +100,7 @@ _TERMINAL_STATES = frozenset({"successful", "failed", "error", "canceled"})
 @router.post(
     "/launch",
     response_model=LaunchResponse,
-    dependencies=[Depends(require_tenant_user_mfa)],
+    dependencies=[Depends(require_tenant_user_mfa), Depends(require_role("editor"))],
 )
 async def launch(
     body: LaunchRequest,
