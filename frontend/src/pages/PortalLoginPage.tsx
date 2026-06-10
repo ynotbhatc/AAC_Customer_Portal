@@ -8,8 +8,10 @@ import { extractErr } from "../lib/utils";
  *
  * Distinct from /my-products/login (M2M tenant_token) and /login
  * (operator admin). Submits email + password + tenant_id against
- * POST /api/portal/v1/auth/login and stores the session_token via
- * setUserSession.
+ * POST /api/portal/v1/auth/login; the server sets aac_session +
+ * aac_csrf cookies (HttpOnly + double-submit). The SPA reads the
+ * non-HttpOnly aac_csrf cookie via readCsrfCookie() on subsequent
+ * mutations.
  *
  * After login, mfa_required users land on /portal/me; the MFA step
  * (PR 16+) gates write endpoints separately. Read endpoints like

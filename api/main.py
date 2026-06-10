@@ -7,6 +7,7 @@ from asgi_correlation_id import CorrelationIdMiddleware
 
 from src.core.audit_middleware import AuditMiddleware
 from src.core.config import get_settings
+from src.core.csrf import CsrfMiddleware
 from src.core.database import get_pool, close_pool
 from src.core.logging import configure_logging
 from src.core.metrics import MetricsMiddleware, metrics_response
@@ -59,6 +60,14 @@ app = FastAPI(
 # middleware (audit log, correlation ID, CORS preflight, etc.).
 app.add_middleware(MetricsMiddleware)
 
+# CSRF (double-submit) — enforces X-CSRF-Token matches the aac_csrf
+# cookie on POST/PATCH/DELETE/PUT, BUT only when the cookie is
+# present. Bearer-authed requests (no cookie) pass through; this is
+# the Phase N+1 transition: SPA moves to cookies and starts sending
+# the header, CLI / pre-N+1 builds keep working on bearer. Phase
+# N+2 will drop the bearer path for browser callers.
+app.add_middleware(CsrfMiddleware)
+
 # Audit log: writes a row to system_audit_log for every mutating
 # request and every 4xx/5xx response. Added BEFORE the correlation
 # middleware so the AuditMiddleware sees the correlation_id ContextVar
@@ -88,7 +97,9 @@ app.add_middleware(
         "Content-Language",
         "Content-Type",
         "Origin",
+        "X-CSRF-Token",
         "X-Token-Id",
+        "X-Portal-Client",
         "X-Requested-With",
     ],
 )

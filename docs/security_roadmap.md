@@ -50,8 +50,8 @@ to `openbao`. The call sites and database schema don't move.
 
 | Item | Today | Trigger | Production target |
 |------|-------|---------|-------------------|
-| Operator + user tokens in localStorage | 🟡 Phase N (backend): login sets `aac_session` + `aac_csrf` cookies and `require_tenant_user` accepts cookie OR bearer. Frontend still on localStorage; Phase N+1 switches it. | First customer onboard | 🟢 `__Host-` HttpOnly + Secure + SameSite=Lax cookies |
-| CSRF protection on state-changing endpoints | 🟡 Phase N (backend): `require_csrf` dependency exists (double-submit) but not yet applied to any endpoint — wait for frontend switch in N+1. | First customer onboard | 🟢 Double-submit cookie pattern |
+| Tenant-user tokens in cookies | 🟢 Phase N+1: SPA reads from HttpOnly `__Host-aac_session` (prod) / `aac_session` (dev) cookie via `withCredentials`. No copy in JS. RequirePortalUser gates on `/me` probe. Bearer path retained for CLI; dropped for browser callers in Phase N+2. | done | done (browser); operator admin still bearer-only (no admin login flow) |
+| CSRF protection on state-changing endpoints | 🟢 Phase N+1: `CsrfMiddleware` enforces double-submit on POST/PATCH/DELETE/PUT when the `aac_csrf` cookie is present. Frontend `csrfRequestInterceptor` echoes the cookie via `X-CSRF-Token`. Bearer-only requests (no cookie) pass through. | done | done |
 | Reset token in URL query param | 🟢 URL `?token=` stripped on mount via `history.replaceState`; input no longer pre-fills from URL; only POST body carries the token | done | done |
 | Logout-everywhere | 🟡 Works server-side; UI message is misleading | First SOC 2 audit | 🟢 UI rewording + audit-log entry |
 

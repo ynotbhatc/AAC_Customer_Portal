@@ -174,7 +174,13 @@ async def test_logout_clears_cookies(client, seeded_user):
     pre = {c.name for c in client.cookies.jar}
     assert "aac_session" in pre and "aac_csrf" in pre
 
-    r = await client.post("/api/portal/v1/me/logout")
+    # Cookie-authed POST needs the matching X-CSRF-Token header
+    # (Phase N+1: CsrfMiddleware enforces double-submit).
+    csrf = client.cookies.get("aac_csrf")
+    r = await client.post(
+        "/api/portal/v1/me/logout",
+        headers={"X-CSRF-Token": csrf or ""},
+    )
     assert r.status_code == 200, r.text
 
     # FastAPI's delete_cookie emits Max-Age=0; httpx drops those names
@@ -203,10 +209,11 @@ async def test_cookie_wins_when_both_cookie_and_header_present(client, seeded_us
 # ── CSRF dependency ──────────────────────────────────────────────────
 
 
-async def test_csrf_dependency_blocks_missing_and_mismatched(pg_pool, seeded_user):
-    """Spin up a tiny app that mounts the CSRF dependency on a POST
-    route. Phase N doesn't yet attach `require_csrf` to a real
-    endpoint; this exercises it standalone.
+async def test_csrf_dependency_lax_semantics(pg_pool, seeded_user):
+    """Phase N+1 semantics: the dependency enforces CSRF only when the
+    `aac_csrf` cookie is present (cookie-authed request). Bearer-only
+    requests pass through so CLI / non-browser clients keep working
+    during the transition window.
     """
     from src.core.csrf import require_csrf
 
@@ -218,12 +225,12 @@ async def test_csrf_dependency_blocks_missing_and_mismatched(pg_pool, seeded_use
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        # Missing both cookie and header → 403.
+        # No cookie, no header → bearer path, passes through.
         r = await c.post("/csrf-test")
-        assert r.status_code == 403
-        assert r.json()["detail"] == "csrf token missing"
+        assert r.status_code == 200
+        assert r.json() == {"ok": True}
 
-        # Cookie set, header missing → 403.
+        # Cookie set, header missing → 403 (cookie path, header required).
         c.cookies.set("aac_csrf", "the-token-value")
         r = await c.post("/csrf-test")
         assert r.status_code == 403

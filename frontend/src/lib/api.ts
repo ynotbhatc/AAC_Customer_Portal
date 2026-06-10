@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import type {
   ComplianceResult,
   FrameworkSummary,
@@ -28,7 +28,7 @@ import type {
   Vendor,
   VendorSubscription,
 } from "../types/cve";
-import { getAdminToken, getTenantCreds } from "./auth";
+import { getAdminToken, getTenantCreds, readCsrfCookie } from "./auth";
 
 const BASE = import.meta.env.VITE_API_URL ?? "/api";
 
@@ -352,21 +352,40 @@ export const portalSuppressCve = (
     .post(`/portal/v1/tenants/${tenantId}/cves/${cveId}/suppress`, { reason })
     .then((r) => r.data);
 
-// ── tenant-USER client — bearer = session_token (portal login) ───────
-// Separate axios instance so login/logout/me/policy endpoints inherit
-// the bearer through one interceptor without polluting the M2M
-// tenantApi above.
-const userApi: AxiosInstance = axios.create({ baseURL: BASE });
+// ── tenant-USER client (Phase N+1) ───────────────────────────────────
+// `withCredentials: true` so the browser sends the HttpOnly aac_session
+// cookie automatically. No Authorization header — the cookie is the
+// authentication.
+//
+// Request interceptor: read the non-HttpOnly aac_csrf cookie and
+// echo it via X-CSRF-Token on POST/PATCH/DELETE/PUT (double-submit
+// CSRF). GET / HEAD / OPTIONS don't need the header. We deliberately
+// only set the header — not Content-Type or any other — so multipart
+// uploads (FormData) still get their boundary auto-generated.
+const userApi: AxiosInstance = axios.create({
+  baseURL: BASE,
+  withCredentials: true,
+});
 
-userApi.interceptors.request.use((cfg) => {
-  const s = getUserSession();
-  if (s) {
-    cfg.headers = cfg.headers ?? {};
-    (cfg.headers as Record<string, string>)["Authorization"] =
-      `Bearer ${s.sessionToken}`;
+const CSRF_METHODS = new Set(["post", "patch", "delete", "put"]);
+
+// Exported for unit-testing — the live wiring happens just below.
+// Pure function: reads the cookie via readCsrfCookie() and mutates
+// the axios request config in place. No-op on GET / HEAD / OPTIONS.
+export function csrfRequestInterceptor(
+  cfg: InternalAxiosRequestConfig
+): InternalAxiosRequestConfig {
+  const method = (cfg.method ?? "get").toLowerCase();
+  if (CSRF_METHODS.has(method)) {
+    const csrf = readCsrfCookie();
+    if (csrf) {
+      (cfg.headers as Record<string, string>)["X-CSRF-Token"] = csrf;
+    }
   }
   return cfg;
-});
+}
+
+userApi.interceptors.request.use(csrfRequestInterceptor);
 
 // Auto-redirect on session expiry / revocation. Components that want
 // to handle 401 themselves can wrap their call in try/catch — the
@@ -375,7 +394,6 @@ userApi.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err?.response?.status === 401) {
-      clearUserSession();
       if (!window.location.pathname.startsWith("/portal/login")) {
         window.location.href = "/portal/login";
       }
@@ -384,11 +402,6 @@ userApi.interceptors.response.use(
   }
 );
 
-import {
-  clearUserSession,
-  getUserSession,
-  setUserSession,
-} from "./auth";
 import type {
   BackupCodesResponse,
   LoginRequest,
@@ -401,32 +414,31 @@ import type {
   TotpVerifyRequest,
 } from "../types/user";
 
+// Login. The server sets aac_session + aac_csrf as Set-Cookie on the
+// 201 response; the browser stores them and `withCredentials: true`
+// puts them on subsequent requests automatically. The body still
+// includes `session_token` for backward compatibility (CLI clients);
+// the SPA ignores it — there is nothing to persist client-side.
 export const userLogin = async (body: LoginRequest): Promise<SessionCreated> => {
   const r = await userApi.post<SessionCreated>("/portal/v1/auth/login", body);
-  setUserSession({
-    sessionToken: r.data.session_token,
-    tenantId: body.tenant_id,
-    email: body.email,
-    expiresAt: r.data.expires_at,
-    mfaRequired: r.data.mfa_required,
-    mfaVerified: r.data.mfa_verified,
-  });
   return r.data;
 };
 
+// Logout. The server clears both cookies via delete_cookie; the
+// browser drops them and subsequent requests carry no session.
 export const userLogout = async (): Promise<void> => {
   try {
     await userApi.post("/portal/v1/me/logout");
-  } finally {
-    clearUserSession();
+  } catch {
+    // Server may have already revoked the session — fine.
   }
 };
 
 export const userLogoutAll = async (): Promise<void> => {
   try {
     await userApi.post("/portal/v1/me/logout-all");
-  } finally {
-    clearUserSession();
+  } catch {
+    // Ignore — same as above.
   }
 };
 
@@ -456,13 +468,12 @@ export const userMfaTotpConfirm = (
 export const userMfaRevokeFactor = (factorId: string): Promise<void> =>
   userApi.post(`/portal/v1/me/mfa/factors/${factorId}/revoke`).then(() => undefined);
 
-// Login-time second factor — flips session.mfa_verified=true on success.
-// Refreshes the local UserSession so the UI immediately sees the new
-// state without forcing a re-login.
+// Login-time second factor — flips the server-side session's
+// mfa_verified=true on success. Callers fetch /me afterward (or
+// rely on the next page load doing it) to observe the updated state;
+// there is no client-side session copy to refresh.
 export const userTotpVerify = async (body: TotpVerifyRequest): Promise<void> => {
   await userApi.post("/portal/v1/auth/totp/verify", body);
-  const s = getUserSession();
-  if (s) setUserSession({ ...s, mfaVerified: true });
 };
 
 // ── Policies — Path A upload + list + detail + actions (PR 17) ───────

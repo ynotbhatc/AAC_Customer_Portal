@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { userLogout, userLogoutAll, userMe } from "../lib/api";
-import { clearUserSession, getUserSession } from "../lib/auth";
 import { extractErr } from "../lib/utils";
 import type { MeResponse } from "../types/user";
 
@@ -11,35 +10,27 @@ import type { MeResponse } from "../types/user";
  * the policy ingestion pages (upload, library browse, review,
  * publish, bundles).
  *
- * If the session was revoked server-side, the api interceptor in
- * lib/api.ts catches the 401 and bounces to /portal/login. This page
- * doesn't need its own retry logic.
+ * Auth state lives server-side (HttpOnly cookie); we read identity
+ * from GET /me. If the session was revoked, the userApi response
+ * interceptor catches the 401 and bounces to /portal/login.
  */
 export default function PortalHomePage() {
   const navigate = useNavigate();
-  const session = getUserSession();
   const [me, setMe] = useState<MeResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!session) {
-      navigate("/portal/login", { replace: true });
-      return;
-    }
     userMe()
       .then(setMe)
       .catch((e) => setErr(extractErr(e)));
-  }, [navigate, session]);
+  }, []);
 
   const onLogout = async () => {
     setBusy(true);
     try {
       await userLogout();
-    } catch {
-      // Ignore — server may have already revoked the session.
     } finally {
-      clearUserSession();
       navigate("/portal/login", { replace: true });
     }
   };
@@ -56,15 +47,10 @@ export default function PortalHomePage() {
     setBusy(true);
     try {
       await userLogoutAll();
-    } catch {
-      // Ignore.
     } finally {
-      clearUserSession();
       navigate("/portal/login", { replace: true });
     }
   };
-
-  if (!session) return null;
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -74,7 +60,9 @@ export default function PortalHomePage() {
             AAC Compliance Portal
           </h1>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-600">{session.email}</span>
+            <span className="text-sm text-slate-600">
+              {me ? me.email : "…"}
+            </span>
             <button
               type="button"
               className="btn-secondary text-sm"

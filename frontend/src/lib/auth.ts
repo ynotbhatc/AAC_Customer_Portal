@@ -38,36 +38,27 @@ export const clearTenantCreds = (): void => {
   localStorage.removeItem(TENANT_KEY);
 };
 
-// ── Tenant-user session (Path-A/B portal login, PR 11+) ─────────────
-// Stored separately from the M2M tenant_token credentials so a tenant
-// user can open the policy portal and the CVE feed UI in the same browser
-// session without one auth context wiping the other.
-
-const USER_SESSION_KEY = "aac.userSession";
-
-export interface UserSession {
-  sessionToken: string;        // "{session_id}.{secret}" combined token
-  tenantId: string;            // surfaced for headers / display
-  email: string;
-  expiresAt: string;           // ISO 8601 — UI uses to soft-expire locally
-  mfaRequired: boolean;
-  mfaVerified: boolean;
-}
-
-export const getUserSession = (): UserSession | null => {
-  const raw = localStorage.getItem(USER_SESSION_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as UserSession;
-  } catch {
-    return null;
+// ── Tenant-user session (Phase N+1) ──────────────────────────────────
+// The session lives in an HttpOnly cookie that the browser sends
+// automatically (axios withCredentials=true on userApi). There is no
+// client-readable copy — that's the point: an XSS can no longer
+// exfiltrate the session. Auth state is derived from the server via
+// GET /api/portal/v1/me; if it 200s, you're authed.
+//
+// The CSRF cookie is the only part the frontend can read; it's
+// echoed via X-CSRF-Token on POST/PATCH/DELETE/PUT (double-submit).
+// Prod uses the `__Host-aac_csrf` name; dev uses bare `aac_csrf`.
+// The reader tries both and returns whichever is set so the same
+// code path works against either environment without a build-time
+// flag.
+export const readCsrfCookie = (): string | null => {
+  const names = ["__Host-aac_csrf", "aac_csrf"];
+  for (const name of names) {
+    const prefix = name + "=";
+    const found = document.cookie
+      .split("; ")
+      .find((c) => c.startsWith(prefix));
+    if (found) return found.slice(prefix.length);
   }
-};
-
-export const setUserSession = (s: UserSession): void => {
-  localStorage.setItem(USER_SESSION_KEY, JSON.stringify(s));
-};
-
-export const clearUserSession = (): void => {
-  localStorage.removeItem(USER_SESSION_KEY);
+  return null;
 };
