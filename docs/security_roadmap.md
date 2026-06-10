@@ -88,7 +88,7 @@ PR. The Copilot review (this thread) names the exact endpoints.
 |------|-------|---------|-------------------|
 | OPA binary download | 🟢 SHA256-verified at build (`api/Containerfile`) | done | done |
 | Standard library clone | 🟢 Pinned to commit SHA, init+fetch-by-ref (`api/Containerfile`) | done | done |
-| Frontend SAST | 🔴 None | First SOC 2 audit | 🟢 `npm audit` in CI + `snyk` or equivalent |
+| Frontend SAST | 🟢 `npm audit` runs in CI on every PR + weekly cron (`.github/workflows/npm-audit.yml`). Gate fails on HIGH severity; MODERATE+ informational. Open moderate advisory (esbuild dev-server, dev-only impact) triaged in `frontend/SECURITY-NOTES.md`. | done | done |
 | Backend SAST | 🟢 `bandit` runs in CI on every PR + weekly cron (`.github/workflows/bandit.yml`). Config in `api/pyproject.toml` skips B608 (asyncpg parameterization pattern; documented). Gate fails on HIGH severity; LOW + MEDIUM informational. Two inline `# nosec` markers cover the only HIGH false positives (jinja autoescape for Rego output; token-id product prefix). | done | done |
 | Container image signing | 🔴 None | First FedRAMP tenant | 🟢 Cosign-signed images |
 | SBOM generation | 🔴 None | First FedRAMP tenant | 🟢 Syft-generated SBOM per release |
