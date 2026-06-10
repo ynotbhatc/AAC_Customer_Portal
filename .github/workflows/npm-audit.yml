@@ -1,0 +1,53 @@
+name: npm audit (Frontend SAST)
+
+# Dependency vulnerability scan for the frontend. Runs on every PR
+# touching frontend/ and on every push to main, plus a weekly cron so
+# a freshly-published advisory against a pinned dep is caught even on
+# a quiet branch. Severity gate: HIGH only this PR. MODERATE+
+# findings are reported in the workflow log for visibility but do not
+# block the merge — tightening the floor comes after we burn down the
+# current esbuild-via-vite moderate.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/npm-audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+  schedule:
+    # Mondays 06:30 UTC — staggered 30m after the bandit + CodeQL
+    # slots so the security signals stack in one half-hour window.
+    - cron: '30 6 * * 1'
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # Auditing against the lockfile alone — no need to install. This
+      # makes the job ~10s vs ~1m of `npm ci`. The advisory database
+      # comes from registry.npmjs.org, not from local node_modules.
+      - name: Visibility pass — moderate+ floor
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Gate — high+ floor
+        run: npm audit --audit-level=high
