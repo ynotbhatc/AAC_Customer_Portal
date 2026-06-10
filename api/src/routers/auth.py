@@ -26,6 +26,7 @@ import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..core.config import get_settings
+from ..core.cookies import set_csrf_cookie, set_session_cookie
 from ..core.rate_limit import rate_limit
 from ..core.passwords import (
     PasswordTooWeak,
@@ -57,6 +58,7 @@ router = APIRouter(prefix="/portal/v1/auth", tags=["portal:auth"])
 async def login(
     body: LoginRequest,
     request: Request,
+    response: Response,
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
     _rate: Annotated[None, Depends(rate_limit("10/minute"))],
 ) -> SessionCreated:
@@ -102,6 +104,15 @@ async def login(
         )
     except Exception:
         pass
+
+    # Phase N: set the session + CSRF cookies alongside the body token.
+    # Browser callers will read the cookies; non-browser callers
+    # (integration tests, CLI) keep working off `session_token` in the
+    # body. Phase N+2 drops `session_token` from the body for browser
+    # callers — see docs/design_auth_cookies.md.
+    settings = get_settings()
+    set_session_cookie(response, session_token, settings)
+    set_csrf_cookie(response, settings)
 
     return SessionCreated(
         session_token=session_token,

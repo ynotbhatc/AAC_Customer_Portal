@@ -15,6 +15,8 @@ import asyncpg
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Response
 
+from ..core.config import get_settings
+from ..core.cookies import clear_csrf_cookie, clear_session_cookie
 from ..core.passwords import (
     PasswordTooWeak,
     check_strength,
@@ -101,19 +103,27 @@ async def set_password(
 
 @router.post("/logout", response_model=LogoutResult)
 async def logout(
+    response: Response,
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
 ) -> LogoutResult:
     await revoke_session(pool, tenant_user["session_id"], reason="user_logout")
+    settings = get_settings()
+    clear_session_cookie(response, settings)
+    clear_csrf_cookie(response, settings)
     return LogoutResult(revoked="session")
 
 
 @router.post("/logout-all", response_model=LogoutResult)
 async def logout_all(
+    response: Response,
     tenant_user: Annotated[dict[str, Any], Depends(require_tenant_user)],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
 ) -> LogoutResult:
     await revoke_all_sessions_for_user(
         pool, tenant_user["tenant_user_id"], reason="user_logout_all"
     )
+    settings = get_settings()
+    clear_session_cookie(response, settings)
+    clear_csrf_cookie(response, settings)
     return LogoutResult(revoked="all")

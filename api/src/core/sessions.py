@@ -31,6 +31,7 @@ import bcrypt
 from fastapi import Depends, Header, HTTPException, Request
 
 from .config import get_settings
+from .cookies import read_session_cookie
 from .portal_db import get_portal_pool
 
 
@@ -120,14 +121,32 @@ async def revoke_all_sessions_for_user(
     )
 
 
+def _extract_session_token(
+    request: Request,
+    authorization: str | None,
+) -> str:
+    """Return the raw session token from cookie OR Authorization header.
+
+    Cookie wins when both are present — phase N+1 frontend will only
+    send the cookie, but during the transition window a misconfigured
+    client could send both; preferring the cookie matches the
+    longer-term path. Raises 401 if neither source has a token.
+    """
+    settings = get_settings()
+    cookie_token = read_session_cookie(request, settings)
+    if cookie_token:
+        return cookie_token
+    if not authorization or not authorization.lower().startswith(_BEARER_PREFIX):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    return authorization[len(_BEARER_PREFIX):].strip()
+
+
 async def _resolve_bearer(
     request: Request,
     authorization: str | None,
     pool: asyncpg.Pool,
 ) -> dict[str, Any]:
-    if not authorization or not authorization.lower().startswith(_BEARER_PREFIX):
-        raise HTTPException(status_code=401, detail="missing bearer token")
-    bearer = authorization[len(_BEARER_PREFIX):].strip()
+    bearer = _extract_session_token(request, authorization)
     if "." not in bearer:
         raise HTTPException(status_code=401, detail="malformed session token")
     session_id_str, secret = bearer.split(".", 1)

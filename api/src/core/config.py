@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     password_reset_lifetime_hours: int = 24   # reset link valid window
     password_min_length: int = 12
 
+    # Cookie security. `cookie_secure=True` enables the production
+    # configuration: Secure flag + __Host- name prefix on session and
+    # CSRF cookies (rejects non-HTTPS, forbids Domain=, requires Path=/).
+    # Dev .env should set COOKIE_SECURE=false so the cookies work over
+    # http://localhost. Phase N (backend-only) keeps the cookie path
+    # additive; the Authorization: Bearer path still works while the
+    # frontend hasn't switched.
+    cookie_secure: bool = True
+
     # Policy document upload limits (Phase 2 — Path A ingestion)
     max_upload_bytes: int = 15 * 1024 * 1024  # 15 MiB
     parser_timeout_seconds: int = 30
