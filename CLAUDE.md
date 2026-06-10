@@ -137,6 +137,18 @@ Forgetting this is the cardinal multi-tenant bug. Schema-level FKs enforce `tena
 
 Cross-tenant data (CVE feeds, standard library, buckets) is on its own surface (`/admin/v1/*`) gated by `PORTAL_ADMIN_TOKEN`, not tenant auth.
 
+## Skill: tenant-user auth (cookies + CSRF, PR #67–69)
+
+The tenant-user surface (`/api/portal/v1/me/*`, `/api/portal/v1/auth/*`) uses HttpOnly cookies, not Authorization bearer:
+
+- **Login** (`POST /api/portal/v1/auth/login`) sets `__Host-aac_session` (HttpOnly, prod) / `aac_session` (dev) and `__Host-aac_csrf` (non-HttpOnly) cookies. Body returns `session_token: null` by default; CLI clients opt in via `X-Portal-Client: cli` header and get the bearer token in the body.
+- **Subsequent requests**: browser sends cookies automatically via `withCredentials: true`. State-changing methods (POST/PATCH/DELETE/PUT) require `X-CSRF-Token` header matching the `aac_csrf` cookie — enforced by `CsrfMiddleware` (`api/src/core/csrf.py`). The middleware skips enforcement when no cookie is present (bearer/CLI path).
+- **`require_tenant_user`** dependency reads from cookie first, falls back to bearer. Cookie wins.
+
+Operator admin (`/api/admin/v1/*`) still uses `PORTAL_ADMIN_TOKEN` bearer — no admin login flow exists yet (see design doc Open Question 2). Don't migrate it to cookies without first designing the admin login UX.
+
+Frontend cookie reader: `frontend/src/lib/auth.ts:readCsrfCookie()`. CSRF interceptor: `frontend/src/lib/api.ts:csrfRequestInterceptor` (axios, applied to `userApi`).
+
 ## Skill: audit logging
 
 Every mutation (POST/PUT/PATCH/DELETE) and every 4xx/5xx response auto-logs to `system_audit_log` via the middleware. Routers can attach richer context:
@@ -151,6 +163,17 @@ async def update(item_id: str, request: Request):
 ```
 
 DB failures during audit insert are swallowed at WARNING level — they never break the response. That's by design (better to miss the occasional row than to 500 the actual operation).
+
+### Immutability triggers (migrations 017 + 018)
+
+`policy_audit_log` and `baseline_snapshots` are storage-layer append-only. `BEFORE UPDATE` / `BEFORE DELETE` triggers `RAISE EXCEPTION` on any direct mutation. Two narrow exceptions:
+
+1. **FK SET NULL cascade**: an UPDATE that ONLY nulls out `tenant_user_id`, `customer_policy_id`, or `captured_by_user_id` is allowed (needed so the existing "(user removed)" UX path keeps working).
+2. **Legal-hold toggle**: setting / clearing `legal_hold_reason` is the one always-allowed column change. While `legal_hold_reason IS NOT NULL`, the row is absolutely frozen — even FK cascade is blocked.
+
+**Consequence:** hard `DELETE FROM tenants` is now blocked when the tenant has audit history. Use soft-delete (`UPDATE tenants SET status='deleted'`). The break-glass "tenant purge" path is documented in `docs/runbooks/tenant_purge.md`.
+
+**Don't write `UPDATE policy_audit_log SET ...` or `DELETE FROM baseline_snapshots ...` from new code.** If you think you need to, you almost certainly want either a new INSERT (append, don't mutate) or a legal-hold operation via `/api/admin/v1/legal-holds`.
 
 ## Skill: migrations
 
@@ -221,7 +244,54 @@ Same convention as the other repos:
   - Copilot code review
   - No fast-forward; no force-update; no deletion
 - **`Approved-By:` trailer required** for protected paths (`.github/workflows/`, `api/migrations/`, `deploy/`)
-- **CI**: pytest + frontend (vitest + tsc + vite build) + CodeQL must all pass
+- **CI gates** (all must pass):
+  - `pytest` — backend tests (`api-tests.yml`)
+  - `vitest + tsc + vite build` — frontend (`frontend-tests.yml`)
+  - `CodeQL` + `Analyze (python)` + `Analyze (javascript-typescript)` — `codeql.yml`
+  - `bandit` — Python SAST, HIGH severity gate (`bandit.yml`)
+  - `npm audit` — JS dependency advisories, HIGH severity gate (`npm-audit.yml`)
+  - `SBOM (api)` + `SBOM (frontend)` — SPDX generation (`sbom.yml`)
+
+### Action provenance (PR #77)
+
+Every `uses:` reference in `.github/workflows/*.yml` is pinned to a **full commit SHA** with a `# v<major>` trailing comment. Never use moving major-version tags. When introducing a new action:
+
+```yaml
+- name: ...
+  uses: owner/action@<40-char-sha>  # v<major>
+```
+
+Look up SHAs with `gh api repos/<owner>/<action>/commits/v<major> --jq '.sha'`. Dependabot (`.github/dependabot.yml`) opens one grouped PR per week for minor + patch bumps; major upgrades are hand-crafted (research migration, look up SHA, write the comment, handle any workflow-syntax changes).
+
+### Bypass workflow
+
+The MainBranch ruleset rejects pushes / merges when CodeQL has open `high_or_higher` alerts on the diff — even when this PR is the one fixing them. The recurring pattern is:
+
+```bash
+# add admin bypass
+gh api -X PUT repos/ynotbhatc/AAC_Customer_Portal/rulesets/17373111 \
+  --input <(echo '{"bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]}') \
+  --jq '.bypass_actors'
+
+# admin-merge
+gh pr merge <PR> --squash --delete-branch --admin
+
+# clear bypass (always restore!)
+gh api -X PUT repos/ynotbhatc/AAC_Customer_Portal/rulesets/17373111 \
+  --input <(echo '{"bypass_actors":[]}') \
+  --jq '.bypass_actors'
+```
+
+`actor_id=5` is the `RepositoryRole=admin` ID, not a user ID. Don't substitute a user ID. Always clear the bypass after merging.
+
+## Operator runbooks
+
+Live in `docs/runbooks/`:
+
+- **`tenant_purge.md`** — hard-deleting a tenant (GDPR right-to-erasure, end-of-contract). Requires DROP TRIGGER → audit → DELETE → CREATE TRIGGER dance because of migration 017's immutability triggers.
+- **`legal_hold.md`** — applying / releasing legal hold. Primary path is the admin API (`POST/DELETE/GET /api/admin/v1/legal-holds`); direct SQL is documented as break-glass.
+
+Add new runbooks when shipping a feature that requires manual operator intervention OR when migration changes break a previously-routine operation.
 
 ## Working with contributors from other teams
 
