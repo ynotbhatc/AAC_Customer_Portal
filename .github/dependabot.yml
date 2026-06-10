@@ -41,6 +41,21 @@ updates:
       github-actions:
         patterns:
           - "*"
+        # Major-version bumps are deliberately excluded from the
+        # group — auto-PRs for breaking changes invite rubber-stamp
+        # merges. Major upgrades should be opt-in: a contributor
+        # researches the migration, opens a PR by hand, and pulls
+        # the SHA + version comment as documented in #77.
+        update-types:
+          - "minor"
+          - "patch"
+    # Belt-and-suspenders: even outside the group, refuse major bumps
+    # so a future config change to `update-types` can't accidentally
+    # surface them.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(deps)"
       include: scope
