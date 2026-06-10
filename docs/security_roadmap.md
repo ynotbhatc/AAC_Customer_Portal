@@ -88,6 +88,7 @@ PR. The Copilot review (this thread) names the exact endpoints.
 |------|-------|---------|-------------------|
 | OPA binary download | 🟢 SHA256-verified at build (`api/Containerfile`) | done | done |
 | Standard library clone | 🟢 Pinned to commit SHA, init+fetch-by-ref (`api/Containerfile`) | done | done |
+| GitHub Actions pinned to commit SHAs | 🟢 Every `uses:` reference in `.github/workflows/*.yml` points at a full commit SHA, not a moving major-version tag. Dependabot (`.github/dependabot.yml`) opens one grouped PR per week when upstream releases land. Reviewer confirms SHA-to-tag correspondence + skims release notes, then admin-merges. | done | done |
 | Frontend SAST | 🟢 `npm audit` runs in CI on every PR + weekly cron (`.github/workflows/npm-audit.yml`). Gate fails on HIGH severity; MODERATE+ informational. Open moderate advisory (esbuild dev-server, dev-only impact) triaged in `frontend/SECURITY-NOTES.md`. | done | done |
 | Backend SAST | 🟢 `bandit` runs in CI on every PR + weekly cron (`.github/workflows/bandit.yml`). Config in `api/pyproject.toml` skips B608 (asyncpg parameterization pattern; documented). Gate fails on HIGH severity; LOW + MEDIUM informational. Two inline `# nosec` markers cover the only HIGH false positives (jinja autoescape for Rego output; token-id product prefix). | done | done |
 | Container image signing | 🔴 None | First FedRAMP tenant | 🟢 Cosign-signed images |

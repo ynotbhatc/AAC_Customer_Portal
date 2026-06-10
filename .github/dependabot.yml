@@ -1,0 +1,47 @@
+version: 2
+
+# Dependabot config — supply-chain hygiene for GitHub Actions.
+#
+# Every action `uses:` reference in this repo is pinned to a full
+# commit SHA (NOT a moving major-version tag), so a malicious
+# republish of the tag — or even a compromise of the upstream repo —
+# cannot silently swap the workflow's runtime. SHA pins are the
+# enforcement; Dependabot is what keeps them current without making
+# pinning a maintenance treadmill.
+#
+# When a new release of a pinned action lands, Dependabot opens one
+# PR for this repo bumping the SHA AND the `# v<major>` trailing
+# comment. The reviewer's job is to:
+#   1. Confirm the SHA truly belongs to the named release
+#      (`gh api repos/<owner>/<repo>/commits/<sha>`) — this catches a
+#      Dependabot-side compromise.
+#   2. Skim the upstream release notes for anything that would
+#      change CI behavior.
+# Then admin-merge under the same workflow we use for other
+# protected-path changes.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    # Weekly is enough for an action-version refresh. Daily would
+    # generate noise without proportional security value, since
+    # high-severity action CVEs are rare and we'd patch out-of-band
+    # anyway.
+    schedule:
+      interval: weekly
+      day: monday
+      # 06:45 UTC, sandwiched between the bandit weekly run (06:00)
+      # and the npm-audit weekly run (06:30) — keeps security-signal
+      # PRs landing in one operator window.
+      time: "06:45"
+    # Group every action bump into a single PR per week. One review,
+    # one merge. Splitting per-action just multiplies the bypass-and-
+    # merge cycle without adding signal.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    open-pull-requests-limit: 5
