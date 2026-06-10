@@ -47,6 +47,26 @@ Before starting:
    storage snapshot. The purge is irreversible; the backup is your
    undo button if you discover a mistake.
 
+5. **No row is on legal hold for the target tenant.** Enumerate:
+
+   ```sql
+   SELECT 'policy_audit_log' AS tbl, id::text, legal_hold_reason
+     FROM policy_audit_log
+    WHERE tenant_id = :TENANT_ID AND legal_hold_reason IS NOT NULL
+   UNION ALL
+   SELECT 'baseline_snapshots', id::text, legal_hold_reason
+     FROM baseline_snapshots
+    WHERE tenant_id = :TENANT_ID AND legal_hold_reason IS NOT NULL;
+   ```
+
+   Non-empty result → STOP. A legal-hold row exists because someone
+   (you, your predecessor, legal counsel) decided this data must not
+   be destroyed. Releasing the hold to enable a deletion that the
+   hold was designed to prevent is itself a legal decision — get
+   explicit sign-off referencing the original hold ticket before
+   proceeding. The release runbook lives at
+   [`docs/runbooks/legal_hold.md`](legal_hold.md).
+
 ---
 
 ## Procedure
