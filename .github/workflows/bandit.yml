@@ -1,0 +1,62 @@
+name: Bandit (Python SAST)
+
+# Static-analysis security scanner. Runs on every PR that touches
+# api/ and on every push to main, plus a weekly schedule so a quiet
+# branch doesn't drift past a freshly-published Bandit signature.
+# Severity gate: HIGH only. LOW + MEDIUM findings are visible in the
+# workflow log for review but do not block the merge. Tighten the
+# floor in a future PR once the team has a stable baseline.
+
+on:
+  pull_request:
+    paths:
+      - "api/**"
+      - ".github/workflows/bandit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+  schedule:
+    # Mondays 06:00 UTC — co-located with CodeQL's 05:30 weekly run so
+    # the security signals land in the same time window.
+    - cron: '0 6 * * 1'
+
+jobs:
+  bandit:
+    name: bandit
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install bandit
+        # Pinned in requirements-dev.txt; install just that dep so the
+        # job stays under ~20s.
+        run: |
+          python -m pip install --upgrade pip
+          pip install $(grep -E '^bandit==' requirements-dev.txt)
+
+      # Visibility pass — surface every finding (LOW and above) in the
+      # log without failing the job. SOC-2 auditors expect to see this
+      # in run history; engineers reviewing PRs see what was triaged.
+      - name: Bandit (informational, LOW+ floor)
+        run: bandit -c pyproject.toml -r src/ -ll
+        continue-on-error: true
+
+      # Enforcement pass — fail the build on HIGH severity findings.
+      # All current HIGH-severity false-positives carry an inline
+      # # nosec marker with a justifying comment.
+      - name: Bandit (gate, HIGH floor)
+        run: bandit -c pyproject.toml -r src/ -lll

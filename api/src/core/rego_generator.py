@@ -46,9 +46,13 @@ _TEMPLATES_ROOT = os.path.join(
     "templates",
 )
 
-_jinja_env = jinja2.Environment(
+# Bandit B701 — autoescape=False is intentional. Template output is
+# Rego policy source (a non-HTML DSL) that feeds `opa eval`. Enabling
+# HTML autoescape would corrupt the policy text (e.g. & → &amp; in
+# operators). Confirmed safe.
+_jinja_env = jinja2.Environment(  # nosec B701
     loader=jinja2.FileSystemLoader(_TEMPLATES_ROOT),
-    autoescape=False,                # Rego is not HTML
+    autoescape=False,
     undefined=jinja2.StrictUndefined,  # explode loudly on missing vars
     keep_trailing_newline=True,
 )
