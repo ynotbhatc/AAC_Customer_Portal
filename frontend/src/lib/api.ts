@@ -416,9 +416,11 @@ import type {
 
 // Login. The server sets aac_session + aac_csrf as Set-Cookie on the
 // 201 response; the browser stores them and `withCredentials: true`
-// puts them on subsequent requests automatically. The body still
-// includes `session_token` for backward compatibility (CLI clients);
-// the SPA ignores it — there is nothing to persist client-side.
+// puts them on subsequent requests automatically.
+//
+// Phase N+2: the response body's `session_token` is null for browser
+// callers (the SPA never opts into `X-Portal-Client: cli`), so there
+// is nothing client-side to persist anyway.
 export const userLogin = async (body: LoginRequest): Promise<SessionCreated> => {
   const r = await userApi.post<SessionCreated>("/portal/v1/auth/login", body);
   return r.data;

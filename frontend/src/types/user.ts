@@ -10,7 +10,9 @@ export interface LoginRequest {
 }
 
 export interface SessionCreated {
-  session_token: string;       // bridge sends as Authorization: Bearer
+  // Phase N+2: null for browser callers (cookie carries the session).
+  // Only populated when the request sets `X-Portal-Client: cli`.
+  session_token: string | null;
   expires_at: string;          // ISO 8601
   mfa_required: boolean;
   mfa_verified: boolean;

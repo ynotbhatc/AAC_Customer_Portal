@@ -50,7 +50,7 @@ to `openbao`. The call sites and database schema don't move.
 
 | Item | Today | Trigger | Production target |
 |------|-------|---------|-------------------|
-| Tenant-user tokens in cookies | 🟢 Phase N+1: SPA reads from HttpOnly `__Host-aac_session` (prod) / `aac_session` (dev) cookie via `withCredentials`. No copy in JS. RequirePortalUser gates on `/me` probe. Bearer path retained for CLI; dropped for browser callers in Phase N+2. | done | done (browser); operator admin still bearer-only (no admin login flow) |
+| Tenant-user tokens in cookies | 🟢 Phase N+1: SPA reads from HttpOnly `__Host-aac_session` (prod) / `aac_session` (dev) cookie via `withCredentials`. No copy in JS. RequirePortalUser gates on `/me` probe. Phase N+2: `session_token` is null in login response body for browser callers (CLI opts in via `X-Portal-Client: cli`). | done | done (browser); operator admin still bearer-only (no admin login flow) |
 | CSRF protection on state-changing endpoints | 🟢 Phase N+1: `CsrfMiddleware` enforces double-submit on POST/PATCH/DELETE/PUT when the `aac_csrf` cookie is present. Frontend `csrfRequestInterceptor` echoes the cookie via `X-CSRF-Token`. Bearer-only requests (no cookie) pass through. | done | done |
 | Reset token in URL query param | 🟢 URL `?token=` stripped on mount via `history.replaceState`; input no longer pre-fills from URL; only POST body carries the token | done | done |
 | Logout-everywhere | 🟡 Works server-side; UI message is misleading | First SOC 2 audit | 🟢 UI rewording + audit-log entry |

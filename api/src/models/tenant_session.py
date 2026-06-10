@@ -15,10 +15,18 @@ class LoginRequest(BaseModel):
 
 
 class SessionCreated(BaseModel):
-    session_token: str = Field(
-        ...,
-        description="Combined session token (session_id.secret). Send as "
-        "Authorization: Bearer <session_token>. Shown only once.",
+    # Phase N+2: browser callers don't get the token in the body — the
+    # HttpOnly `aac_session` cookie set on the same response is the
+    # authentication mechanism. CLI / integration clients opt back in
+    # by sending `X-Portal-Client: cli` on the login request; the
+    # server then includes the token here for the legacy bearer flow.
+    session_token: str | None = Field(
+        default=None,
+        description=(
+            "Combined session token (session_id.secret). Only returned "
+            "when the request carries `X-Portal-Client: cli`; browser "
+            "callers receive an HttpOnly aac_session cookie instead."
+        ),
     )
     expires_at: datetime
     mfa_required: bool

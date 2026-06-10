@@ -1,22 +1,20 @@
-"""Cookie + CSRF integration tests for Phase N of the cookie-auth
-migration (see docs/design_auth_cookies.md).
+"""Cookie + CSRF integration tests for the cookie-auth migration
+(see docs/design_auth_cookies.md).
 
-What this pins:
+What this pins (as of Phase N+2):
 - `POST /portal/v1/auth/login` issues `aac_session` + `aac_csrf`
-  cookies AND still returns `session_token` in the body so non-browser
-  clients keep working through the transition window.
+  cookies on every successful login.
+- Browser callers receive `session_token: null` in the response body
+  — the HttpOnly cookie is the only session secret JS could ever see.
+- CLI callers opt back into the body token by sending the
+  `X-Portal-Client: cli` header.
 - `require_tenant_user` accepts the cookie path.
 - `require_tenant_user` still accepts the Authorization: Bearer path
-  (backward compat is the whole point of Phase N).
+  (backward compat for CLI clients using the opt-in body token).
 - `POST /portal/v1/me/logout` clears the cookies.
-- `require_csrf` dependency 403s when the cookie/header are missing
-  or mismatched and 200s when they match.
-
-The CSRF dependency is NOT yet applied to any real endpoint in Phase
-N — frontend isn't sending the header yet, so attaching it would
-break browser flows. Phase N+1 wires it onto mutating routes. We
-exercise the dependency directly via a test-only route here so a
-regression in the dependency itself surfaces immediately.
+- `require_csrf` dependency exhibits lax semantics: enforces only
+  when the cookie is present (Phase N+1 wired the live middleware
+  with the same contract).
 """
 from __future__ import annotations
 
@@ -106,17 +104,26 @@ async def test_login_sets_session_and_csrf_cookies(client, seeded_user):
     assert session_cookie.has_nonstandard_attr("HttpOnly")
     assert not csrf_cookie.has_nonstandard_attr("HttpOnly")
 
-    # Body keeps `session_token` for non-browser callers — that's the
-    # whole point of Phase N being additive.
+    # Phase N+2: browser callers (no X-Portal-Client header) receive
+    # `session_token: null`. The HttpOnly cookie set above is the
+    # only place the session secret lives client-side.
     body = r.json()
-    assert "session_token" in body
-    assert body["session_token"]
+    assert body.get("session_token") is None
+    assert body["expires_at"]
 
 
 # ── require_tenant_user honors both paths ────────────────────────────
 
 
-async def _login(client, user):
+async def _login(client, user, *, as_cli: bool = False):
+    """Login helper.
+
+    Browser-style login (as_cli=False) gets only cookies. The
+    bearer-path tests pass as_cli=True so the response body still
+    carries `session_token` — the Phase N+2 contract is opt-in for
+    CLI clients via `X-Portal-Client: cli`.
+    """
+    headers = {"X-Portal-Client": "cli"} if as_cli else {}
     r = await client.post(
         "/api/portal/v1/auth/login",
         json={
@@ -124,6 +131,7 @@ async def _login(client, user):
             "email": user["email"],
             "password": user["password"],
         },
+        headers=headers,
     )
     assert r.status_code == 201, r.text
     return r
@@ -142,13 +150,15 @@ async def test_me_via_cookie(client, seeded_user):
 
 
 async def test_me_via_authorization_header(client, seeded_user):
-    """Backward-compat path: explicit Authorization header still works.
+    """Backward-compat path: explicit Authorization header still works
+    for CLI clients that opt in to the body session_token.
 
     Clear the cookies first so the cookie path can't accidentally serve
     the request — we want to prove the header path is live.
     """
-    login = await _login(client, seeded_user)
+    login = await _login(client, seeded_user, as_cli=True)
     token = login.json()["session_token"]
+    assert token, "CLI login should include session_token in body"
     client.cookies.clear()
 
     r = await client.get(

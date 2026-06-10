@@ -105,17 +105,24 @@ async def login(
     except Exception:
         pass
 
-    # Phase N: set the session + CSRF cookies alongside the body token.
-    # Browser callers will read the cookies; non-browser callers
-    # (integration tests, CLI) keep working off `session_token` in the
-    # body. Phase N+2 drops `session_token` from the body for browser
-    # callers — see docs/design_auth_cookies.md.
+    # Set the session + CSRF cookies on the response. Browser callers
+    # use the HttpOnly aac_session cookie for auth and the aac_csrf
+    # cookie + X-CSRF-Token header for double-submit. Both are issued
+    # unconditionally because a future cookie-aware CLI client may
+    # benefit too; the cost is two extra Set-Cookie headers.
     settings = get_settings()
     set_session_cookie(response, session_token, settings)
     set_csrf_cookie(response, settings)
 
+    # Phase N+2: only include `session_token` in the response body for
+    # clients that explicitly identify as CLI. Browser callers receive
+    # cookies and no body token — the SPA already ignores the field, and
+    # not emitting it removes an unnecessary JS-readable copy of the
+    # session secret. CLI clients (integration tests, ops scripts) opt
+    # in via `X-Portal-Client: cli`.
+    is_cli = (request.headers.get("X-Portal-Client") or "").lower() == "cli"
     return SessionCreated(
-        session_token=session_token,
+        session_token=session_token if is_cli else None,
         expires_at=expires_at,
         mfa_required=row["mfa_required"],
         mfa_verified=not row["mfa_required"],

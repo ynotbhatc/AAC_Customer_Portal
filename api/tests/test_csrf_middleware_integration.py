@@ -61,7 +61,11 @@ async def client(pg_pool):
         await _reset()
 
 
-async def _login(client, user):
+async def _login(client, user, *, as_cli: bool = False):
+    """Login helper. as_cli=True sends X-Portal-Client: cli so the
+    response body carries `session_token` (the Phase N+2 opt-in
+    contract). Browser-style logins get only cookies."""
+    headers = {"X-Portal-Client": "cli"} if as_cli else {}
     r = await client.post(
         "/api/portal/v1/auth/login",
         json={
@@ -69,6 +73,7 @@ async def _login(client, user):
             "email": user["email"],
             "password": user["password"],
         },
+        headers=headers,
     )
     assert r.status_code == 201, r.text
     return r
@@ -113,8 +118,9 @@ async def test_bearer_only_post_passes_without_csrf_header(client, seeded):
     can't read them from the user's browser).
 
     Note: this DOES revoke the session — fine for the assertion."""
-    login = await _login(client, seeded)
+    login = await _login(client, seeded, as_cli=True)
     token = login.json()["session_token"]
+    assert token, "CLI login should include session_token in body"
     client.cookies.clear()
     r = await client.post(
         "/api/portal/v1/me/logout",
