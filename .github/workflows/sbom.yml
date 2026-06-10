@@ -1,0 +1,80 @@
+name: SBOM (Software Bill of Materials)
+
+# Generates SPDX-JSON SBOMs for the api/ and frontend/ directories
+# on every PR that touches them + on every push to main, plus a
+# weekly cron. SPDX is the FedRAMP-class auditor's preferred format;
+# the artifact is what they ask for when proving "we know what's in
+# our software."
+#
+# The workflow does TWO things per directory:
+#
+#   1. Generate the SPDX SBOM and upload it as a workflow artifact
+#      (downloadable from the Actions tab; 90-day retention).
+#
+#   2. Push the dependency graph into GitHub's Dependency Graph
+#      (`dependency-snapshot: true`). This is what makes Dependabot
+#      vulnerability alerts work for the project — the SBOM data
+#      replaces "Dependabot must guess from requirements.txt" with
+#      "Dependabot has the canonical inventory."
+#
+# Action provenance: anchore/sbom-action wraps syft and is pinned to
+# a full commit SHA per the convention established in #77.
+# Dependabot (`.github/dependabot.yml`) will open a grouped PR if
+# this action publishes a new release.
+
+on:
+  pull_request:
+    paths:
+      - "api/**"
+      - "frontend/**"
+      - ".github/workflows/sbom.yml"
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "frontend/**"
+  schedule:
+    # Mondays 07:00 UTC — staggered after the bandit/codeql/npm-audit
+    # security slots (06:00–06:45) so a single operator window covers
+    # every weekly security signal.
+    - cron: '0 7 * * 1'
+
+# Required for dependency-snapshot to write into the Dependency Graph
+# AND for upload-artifact's default permissions.
+permissions:
+  contents: write
+
+jobs:
+  api-sbom:
+    name: SBOM (api)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Generate SBOM for api/
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          path: ./api
+          format: spdx-json
+          # The artifact name appears in the Actions UI sidebar and is
+          # what an auditor downloads.
+          artifact-name: aac-portal-api-sbom.spdx.json
+          # Push into the GitHub Dependency Graph so Dependabot uses
+          # the SBOM as its canonical view of api/ dependencies.
+          dependency-snapshot: true
+
+  frontend-sbom:
+    name: SBOM (frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Generate SBOM for frontend/
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          path: ./frontend
+          format: spdx-json
+          artifact-name: aac-portal-frontend-sbom.spdx.json
+          dependency-snapshot: true

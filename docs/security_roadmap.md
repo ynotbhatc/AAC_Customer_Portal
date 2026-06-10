@@ -92,7 +92,7 @@ PR. The Copilot review (this thread) names the exact endpoints.
 | Frontend SAST | 🟢 `npm audit` runs in CI on every PR + weekly cron (`.github/workflows/npm-audit.yml`). Gate fails on HIGH severity; MODERATE+ informational. Open moderate advisory (esbuild dev-server, dev-only impact) triaged in `frontend/SECURITY-NOTES.md`. | done | done |
 | Backend SAST | 🟢 `bandit` runs in CI on every PR + weekly cron (`.github/workflows/bandit.yml`). Config in `api/pyproject.toml` skips B608 (asyncpg parameterization pattern; documented). Gate fails on HIGH severity; LOW + MEDIUM informational. Two inline `# nosec` markers cover the only HIGH false positives (jinja autoescape for Rego output; token-id product prefix). | done | done |
 | Container image signing | 🔴 None | First FedRAMP tenant | 🟢 Cosign-signed images |
-| SBOM generation | 🔴 None | First FedRAMP tenant | 🟢 Syft-generated SBOM per release |
+| SBOM generation | 🟢 SPDX-JSON SBOMs for `api/` + `frontend/` generated on every PR + push to main + weekly cron (`.github/workflows/sbom.yml`). Uses `anchore/sbom-action` (wraps syft), SHA-pinned per the `#77` convention. Each run uploads two artifacts (90-day retention) AND pushes the dependency graph into GitHub Dependency Graph so Dependabot vulnerability alerts work off the canonical inventory. | done | done |
 
 ### Network / runtime
 
