@@ -79,7 +79,7 @@ PR. The Copilot review (this thread) names the exact endpoints.
 |------|-------|---------|-------------------|
 | `policy_audit_log` immutability | 🟢 BEFORE UPDATE / DELETE triggers enforce append-only at the storage layer (`api/migrations/017_audit_immutability_triggers.sql`). One narrow allowed mutation: an UPDATE that only NULLs out a nullable FK column (FK SET NULL cascade — `tenant_user_id` or `customer_policy_id`). Direct mutation attempts raise `check_violation`. | done | done |
 | `baseline_snapshots` immutability | 🟢 Same trigger pattern. Direct UPDATE / DELETE raise; only `captured_by_user_id → NULL` cascade is permitted. | done | done |
-| Retention / legal hold | 🔴 No policy. Note: as of migration 017, hard-deleting a `tenant` with `baseline_snapshots` history is blocked by the BEFORE DELETE trigger (cascade can't fire). A future tenant-purge runbook will need to `DROP TRIGGER` + audit + re-`CREATE`. | First SOC 2 audit | 🟢 Per-table TTL config + legal-hold flag + documented tenant-purge procedure |
+| Retention / legal hold | 🟡 Tenant-purge procedure documented in [`docs/runbooks/tenant_purge.md`](runbooks/tenant_purge.md) (closes the gap migration 017 created). Still open: per-row legal-hold flag, per-table TTL config. | First SOC 2 audit | 🟢 Per-table TTL config + legal-hold flag + documented tenant-purge procedure |
 | Audit action taxonomy | 🟢 Canonical enum in `api/src/core/audit_actions.py` mirrored in `frontend/src/types/auditActions.ts`; coverage tests on both sides | done | done |
 
 ### Supply chain
