@@ -50,8 +50,8 @@ to `openbao`. The call sites and database schema don't move.
 
 | Item | Today | Trigger | Production target |
 |------|-------|---------|-------------------|
-| Operator + user tokens in localStorage | 🔴 Vulnerable to XSS exfiltration | First customer onboard | 🟢 `__Host-` HttpOnly + Secure + SameSite=Lax cookies |
-| CSRF protection on state-changing endpoints | 🔴 None | First customer onboard | 🟢 Double-submit cookie pattern |
+| Operator + user tokens in localStorage | 🟡 Phase N (backend): login sets `aac_session` + `aac_csrf` cookies and `require_tenant_user` accepts cookie OR bearer. Frontend still on localStorage; Phase N+1 switches it. | First customer onboard | 🟢 `__Host-` HttpOnly + Secure + SameSite=Lax cookies |
+| CSRF protection on state-changing endpoints | 🟡 Phase N (backend): `require_csrf` dependency exists (double-submit) but not yet applied to any endpoint — wait for frontend switch in N+1. | First customer onboard | 🟢 Double-submit cookie pattern |
 | Reset token in URL query param | 🟢 URL `?token=` stripped on mount via `history.replaceState`; input no longer pre-fills from URL; only POST body carries the token | done | done |
 | Logout-everywhere | 🟡 Works server-side; UI message is misleading | First SOC 2 audit | 🟢 UI rewording + audit-log entry |
 

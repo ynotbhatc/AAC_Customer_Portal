@@ -23,6 +23,9 @@ os.environ.setdefault("PORTAL_ADMIN_TOKEN", "test-admin-token")
 # SECRET_KEY is required by config.Settings — Pydantic raises at
 # import time otherwise. Tests use a deterministic dev-only value.
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+# Cookie security defaults to True (production); flip off for tests so
+# the test client (http://test) actually receives Set-Cookie headers.
+os.environ.setdefault("COOKIE_SECURE", "false")
 
 # Re-export the DB integration fixtures so any test file that needs a
 # real PostgreSQL pool can `def test_x(pg_pool):` directly. The
