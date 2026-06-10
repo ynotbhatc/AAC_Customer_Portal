@@ -13,7 +13,7 @@ from typing import Annotated
 
 import asyncpg
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Path, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 
 from ..core.auth import require_admin
 from ..core.portal_db import get_portal_pool
@@ -56,6 +56,7 @@ def _hash_secret(secret: str) -> str:
 # ── tenant CRUD ───────────────────────────────────────────────────────
 @router.post("", response_model=Tenant, status_code=201)
 async def create_tenant(
+    request: Request,
     body: TenantCreate,
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
 ) -> dict:
@@ -74,6 +75,10 @@ async def create_tenant(
         body.aac_bridge_verify_ssl,
         body.notes,
     )
+    # Tag the resource so AuditMiddleware stamps system_audit_log with
+    # ("tenant", <id>). Without this the row has resource_type=NULL
+    # and an auditor can't filter for "all tenant onboarding events".
+    request.state.audit_resource = ("tenant", str(row["id"]))
     return dict(row)
 
 
@@ -104,10 +109,12 @@ async def get_tenant(
 
 @router.patch("/{tenant_id}", response_model=Tenant)
 async def update_tenant(
+    request: Request,
     tenant_id: Annotated[str, Path()],
     body: TenantUpdate,
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
 ) -> dict:
+    request.state.audit_resource = ("tenant", tenant_id)
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(status_code=400, detail="no fields to update")
@@ -138,6 +145,7 @@ async def update_tenant(
 
 @router.delete("/{tenant_id}", status_code=204, response_class=Response, response_model=None)
 async def soft_delete_tenant(
+    request: Request,
     tenant_id: Annotated[str, Path()],
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
 ) -> None:
@@ -147,11 +155,13 @@ async def soft_delete_tenant(
     )
     if result.endswith(" 0"):
         raise HTTPException(status_code=404, detail="tenant not found")
+    request.state.audit_resource = ("tenant", tenant_id)
 
 
 # ── token management ──────────────────────────────────────────────────
 @router.post("/{tenant_id}/tokens", response_model=TokenCreated, status_code=201)
 async def create_token(
+    request: Request,
     tenant_id: Annotated[str, Path()],
     body: TokenCreate,
     pool: Annotated[asyncpg.Pool, Depends(get_portal_pool)],
@@ -181,6 +191,10 @@ async def create_token(
         body.description,
         body.scopes,
     )
+    # Bridge token issuance lands in system_audit_log via the audit
+    # middleware. Tagging the resource lets auditors slice the log by
+    # `resource_type='tenant_token'` to enumerate every issuance event.
+    request.state.audit_resource = ("tenant_token", token_id)
     return {**dict(row), "token_secret": token_secret}
 
 
@@ -219,6 +233,7 @@ async def list_tokens(
 
 @router.post("/{tenant_id}/tokens/{token_id}/revoke", status_code=204, response_class=Response, response_model=None)
 async def revoke_token(
+    request: Request,
     tenant_id: Annotated[str, Path()],
     token_id: Annotated[str, Path()],
     body: TokenRevoke,
@@ -237,5 +252,6 @@ async def revoke_token(
         tenant_id,
         token_id,
     )
+    request.state.audit_resource = ("tenant_token", token_id)
     if result.endswith(" 0"):
         raise HTTPException(status_code=404, detail="active token not found")
