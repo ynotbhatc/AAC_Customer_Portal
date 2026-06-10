@@ -29,7 +29,8 @@ import PortalBaselinesPage from "./pages/PortalBaselinesPage";
 import PortalBaselineDetailPage from "./pages/PortalBaselineDetailPage";
 import PortalHostMappingsPage from "./pages/PortalHostMappingsPage";
 import PortalPermissionsPage from "./pages/PortalPermissionsPage";
-import { getAdminToken, getUserSession } from "./lib/auth";
+import { getAdminToken } from "./lib/auth";
+import { userMe } from "./lib/api";
 
 const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
   const [authed, setAuthed] = useState<boolean>(Boolean(getAdminToken()));
@@ -44,14 +45,30 @@ const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+// Tenant-user gate (Phase N+1). The session lives in an HttpOnly
+// cookie that JS can't read, so we probe /me to ask the server
+// whether the cookie is valid. While the probe is in flight we
+// show a tiny placeholder rather than flicker the login page in
+// front of an already-authed user.
 const RequirePortalUser = ({ children }: { children: React.ReactNode }) => {
-  const [authed, setAuthed] = useState<boolean>(Boolean(getUserSession()));
+  const [state, setState] = useState<"checking" | "ok" | "denied">("checking");
   useEffect(() => {
-    const onStorage = () => setAuthed(Boolean(getUserSession()));
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    let mounted = true;
+    userMe()
+      .then(() => mounted && setState("ok"))
+      .catch(() => mounted && setState("denied"));
+    return () => {
+      mounted = false;
+    };
   }, []);
-  if (!authed) return <Navigate to="/portal/login" replace />;
+  if (state === "checking") {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">
+        Checking session…
+      </div>
+    );
+  }
+  if (state === "denied") return <Navigate to="/portal/login" replace />;
   return <>{children}</>;
 };
 

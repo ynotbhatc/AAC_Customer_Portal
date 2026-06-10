@@ -13,8 +13,8 @@ import { extractErr } from "../lib/utils";
  * page. Subsequent MFA-gated endpoints (policy uploads, publish,
  * bundle build) now work.
  *
- * No re-fetch of /me is needed — userTotpVerify updates the local
- * UserSession optimistically.
+ * After verify succeeds, navigating to /portal/me re-fetches /me and
+ * the UI observes the updated server-side mfa_verified state.
  */
 export default function PortalMfaVerifyPage() {
   const navigate = useNavigate();
