@@ -120,7 +120,7 @@ protecting its half.
 
 | Item | Today | Trigger | Production target |
 |------|-------|---------|-------------------|
-| Bridge token issuance audit | 🟡 Logged via `policy_audit_log` action — verify the action name lines up with the rest of the taxonomy | Pre-customer | 🟢 Always present in audit log; action name canonical |
+| Bridge token issuance audit | 🟢 Lands in `system_audit_log` via the audit middleware (POST → AUDITED_METHODS). The tenant router now tags `request.state.audit_resource` → `("tenant_token", token_id)` on create + revoke so auditors can filter by `resource_type='tenant_token'`. Same convention extended to `("tenant", id)` for create/update/delete tenant. | done | done |
 | Bridge token revocation propagation | 🟢 Server-side revoke takes effect immediately on next bridge poll | done | done |
 | Bridge identity attestation | 🔴 No attestation today; whoever holds the token IS the bridge | First FedRAMP tenant | 🟢 mTLS or signed-attestation on bridge identity |
 
