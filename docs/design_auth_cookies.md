@@ -1,7 +1,10 @@
 # Design — HttpOnly Cookies + CSRF for Browser Auth
 
-**Status:** draft for review — implementation gated on the answers
-to the Open Questions section.
+**Status:** implemented for tenant-user auth — Phase N (#67) +
+Phase N+1 (#68) + Phase N+2 (this PR) all shipped. The historical
+design notes below describe the path taken; the migration table at
+the bottom is the current contract. Operator-admin migration is
+still open (see Open Question 2).
 
 **Principle:** This is auth for a security product. Browser-side
 credential storage has to be **right** the first time — no
