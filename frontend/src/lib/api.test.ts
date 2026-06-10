@@ -71,10 +71,19 @@ describe("csrfRequestInterceptor", () => {
   });
 
   it("prefers the prod __Host- cookie over the dev one", () => {
-    document.cookie = "aac_csrf=dev-token; path=/";
-    document.cookie = "__Host-aac_csrf=prod-token; path=/";
-    const cfg = csrfRequestInterceptor(makeCfg("post"));
-    expect((cfg.headers as Record<string, string>)["X-CSRF-Token"]).toBe("prod-token");
+    // jsdom rejects __Host- cookies over http; stub the getter to
+    // exercise the precedence path. Same trick as auth.test.ts.
+    const desc = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      get: () => "aac_csrf=dev-token; __Host-aac_csrf=prod-token",
+    });
+    try {
+      const cfg = csrfRequestInterceptor(makeCfg("post"));
+      expect((cfg.headers as Record<string, string>)["X-CSRF-Token"]).toBe("prod-token");
+    } finally {
+      if (desc) Object.defineProperty(document, "cookie", desc);
+    }
   });
 
   it("does not overwrite an already-set X-CSRF-Token caller put on", () => {

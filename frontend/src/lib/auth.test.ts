@@ -38,9 +38,20 @@ describe("readCsrfCookie", () => {
   });
 
   it("prefers the prod cookie when both are set", () => {
-    document.cookie = "aac_csrf=dev-value; path=/";
-    document.cookie = "__Host-aac_csrf=prod-value; path=/";
-    expect(readCsrfCookie()).toBe("prod-value");
+    // jsdom refuses to *set* a `__Host-` cookie via document.cookie
+    // over http (matches the spec — `__Host-` requires Secure). We
+    // bypass the setter by stubbing the document.cookie getter
+    // directly with both values; the reader only reads.
+    const desc = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      get: () => "aac_csrf=dev-value; __Host-aac_csrf=prod-value",
+    });
+    try {
+      expect(readCsrfCookie()).toBe("prod-value");
+    } finally {
+      if (desc) Object.defineProperty(document, "cookie", desc);
+    }
   });
 
   it("ignores unrelated cookies", () => {
