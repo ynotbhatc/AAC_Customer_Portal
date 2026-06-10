@@ -16,3 +16,7 @@ pytest-asyncio>=0.24
 # default `pytest` only runs unit tests; integration tests
 # automatically skip if no container runtime is reachable.
 testcontainers[postgres]==4.7.1
+# Static-analysis security scanner. Run locally via `bandit -r src/`.
+# Config lives in pyproject.toml ([tool.bandit]). CI gates on HIGH
+# severity via .github/workflows/bandit.yml.
+bandit==1.8.6

@@ -34,7 +34,10 @@ router = APIRouter(
 )
 
 # ── token generation ──────────────────────────────────────────────────
-TOKEN_ID_PREFIX = "aac"
+# Bandit B105 — "aac" is the literal product-name prefix glued onto the
+# random token-id (e.g. "aac_xxxxxxxxxxxxxxxx"); bandit's hardcoded-
+# password heuristic mistakes the variable name "TOKEN_*" for a secret.
+TOKEN_ID_PREFIX = "aac"  # nosec B105
 TOKEN_ID_LENGTH = 16
 TOKEN_SECRET_LENGTH = 48
 _TOKEN_ALPHABET = string.ascii_letters + string.digits

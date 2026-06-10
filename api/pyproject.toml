@@ -20,3 +20,22 @@ markers = [
 PG_PASSWORD = "test"
 PORTAL_PG_PASSWORD = "test"
 PORTAL_ADMIN_TOKEN = "test-admin-token"
+
+[tool.bandit]
+# Static analysis for security issues. The CI gate fires on HIGH-
+# severity findings only; LOW + MEDIUM are reported in the workflow
+# log for awareness but don't block the merge. Tighten the floor in a
+# future PR once the team has a stable baseline.
+#
+# Skipped checks:
+#   - B608 (hardcoded SQL injection via string-construction):
+#     every f-string SQL query in this codebase uses asyncpg
+#     parameterization ($1, $2, ...) for VALUES. The ONLY interpolated
+#     pieces are column-name fragments derived from Pydantic model
+#     keys (body.model_dump() → fields.items()) or class-defined enum
+#     values (AuditAction.X.value). Bandit can't see through the
+#     f-string to verify this and produces 24 false positives across
+#     the routers. A real injection here would require a Pydantic
+#     model change, which goes through code review.
+skips = ["B608"]
+exclude_dirs = ["tests", "migrations", ".venv", "__pycache__"]
