@@ -22,6 +22,7 @@ from src.routers import (
     enrollments,
     feeds,
     host_mappings,
+    legal_holds,
     me,
     me_mfa,
     permissions,
@@ -107,6 +108,7 @@ app.add_middleware(
 app.include_router(compliance.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")
 app.include_router(tenant_users.router, prefix="/api")
+app.include_router(legal_holds.router, prefix="/api")
 app.include_router(feeds.router, prefix="/api")
 app.include_router(classification.router, prefix="/api")
 app.include_router(enrollments.router, prefix="/api")

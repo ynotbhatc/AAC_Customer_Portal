@@ -1,13 +1,52 @@
 # Runbook — Apply or Release a Legal Hold
 
-**Audience:** Operator with database superuser access (or the `aac_portal_app` role on the affected tables).
+**Audience:** Operator with `PORTAL_ADMIN_TOKEN` (primary path) or database superuser access (break-glass).
 **Trigger:** External legal / compliance event requires that specific audit rows be preserved past their normal lifecycle: litigation hold, regulator preservation order, SOC-2 audit window for a specific tenant, internal incident-response forensics window.
 
 **Scope:** This runbook covers `policy_audit_log` and `baseline_snapshots`. Both tables grew a `legal_hold_reason text NULL` column in migration 018. When the column is non-NULL on a row, the immutability triggers escalate from "append-only" to "absolutely frozen except for the hold itself" — no UPDATE of any other column, no DELETE (direct or cascade), no FK SET NULL.
 
-**Why no API yet:** legal hold is a rare, deliberate operator action. Wiring an API endpoint before the runbook stabilises the semantics invites accidental holds. A future PR can ship `POST /api/admin/v1/legal-hold` that wraps the SQL below.
+## Primary path: admin API
+
+Use the typed admin endpoints. The API wraps the SQL flow below
+and writes the same `system_audit_log` rows.
+
+```bash
+# Apply
+curl -X POST "$PORTAL_URL/api/admin/v1/legal-holds" \
+  -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource_type": "policy_audit_log",
+    "resource_id": "12345",
+    "reason": "SEC-2026-014 preservation order",
+    "approval_ticket": "INTERNAL-LEGAL-9182"
+  }'
+
+# Release
+curl -X DELETE "$PORTAL_URL/api/admin/v1/legal-holds/policy_audit_log/12345" \
+  -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"release_ticket": "INTERNAL-LEGAL-9183"}'
+
+# Enumerate
+curl "$PORTAL_URL/api/admin/v1/legal-holds" \
+  -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN"
+```
+
+The API rejects:
+
+- Apply against a row that's already on hold (`409`) — to change the reason, release and re-apply.
+- Apply with a `reason` shorter than 5 characters (`422`) — placeholder reasons aren't audit-defensible.
+- Wrong ID type per table (`400`) — `policy_audit_log.id` is bigint, `baseline_snapshots.id` is uuid.
+- Release of a row that's not on hold (`409`) — surfaces a wrong-row-id error instead of silently no-op'ing.
+
+The direct-SQL path below remains documented for **break-glass** use when the API is unavailable (network partition, portal service down). The DB-level semantics are identical — the API is a typed wrapper, not a separate enforcement layer.
 
 ---
+
+## Break-glass: direct SQL
+
+The remaining sections describe the SQL flow the API wraps. Use them only when the portal API is unreachable.
 
 ## Apply a hold
 
